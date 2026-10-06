@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+secrets.yaml
+# Felicity Open API documentation and its fetch tool: kept locally, not published
+docs/api/
+tools/

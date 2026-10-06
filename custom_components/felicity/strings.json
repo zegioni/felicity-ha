@@ -1,0 +1,102 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Felicity Inverter Integration Cloud",
+        "description": "Sign in with your Felicity account (the one used in the Felicity app). It needs Open API access.\n\n**Warning:** this integration can change your inverter's and battery's settings. A wrong setting can cut power to your home, damage the inverter, the battery or connected equipment, or void the warranty. Costs and runtime are estimates. The software comes without any warranty and the author accepts no liability for any damage.",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password",
+          "accept_risk": "I understand and use it at my own risk"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Felicity Solar: sign in again",
+        "description": "The Felicity cloud no longer accepts the password of {username}.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Wrong username or password, or the account has no Open API access",
+      "cannot_connect": "Cannot reach the Felicity API",
+      "accept_risk": "Please confirm that you use the integration at your own risk"
+    },
+    "abort": {
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Signed in again"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Felicity Inverter Integration Cloud",
+        "menu_options": {
+          "general": "Matter outlets",
+          "tariff": "Electricity tariff & battery reserve"
+        }
+      },
+      "general": {
+        "title": "Matter outlets",
+        "data": {
+          "matter_outlets": "Create Matter outlets (Home / Battery / Grid)"
+        },
+        "data_description": {
+          "matter_outlets": "Three virtual smart plugs with power and energy, for exposing through a Matter bridge. They never control the inverter."
+        }
+      },
+      "tariff": {
+        "title": "Electricity tariff",
+        "description": "Pick “My own zones” to set any names, prices and hours yourself, or start from a ready tariff and adjust it on the next page. The Solar panel's Tariff tab edits the same tariff visually.\n\n{error}",
+        "data": {
+          "preset": "Tariff",
+          "currency": "Currency (ISO code, e.g. UAH, EUR)",
+          "price_entity": "Price sensor (dynamic tariffs only)",
+          "export_price": "Price paid for energy sold to the grid, per kWh",
+          "battery_reserve": "Battery reserve, % (empty = the inverter's own Low Batt level)",
+          "zone_count": "Number of zones (for your own zones)"
+        },
+        "data_description": {
+          "price_entity": "For Nord Pool, ENTSO-E, Tibber and similar: the sensor with the current price per kWh. Used only with the dynamic tariff.",
+          "battery_reserve": "The battery runtime is counted down to this level. Leave empty to follow the inverter's setting (Low Batt on IVAM, off-grid discharge depth on IVGM).",
+          "zone_count": "Only used with “My own zones”. A ready tariff brings its own zones."
+        }
+      },
+      "zones": {
+        "title": "Tariff zones",
+        "description": "Name, price per kWh in {currency} and hours of each zone. Hours: comma-separated ranges like 07:00-11:00, 20:00-22:00; add Mon-Fri, Sat-Sun, Sat or Sun after a range to limit its days. Leave the hours of one zone empty — it covers all remaining time.\n\n{error}",
+        "data": {
+          "z0_name": "Zone 1 · name",
+          "z0_price": "Zone 1 · price per kWh",
+          "z0_hours": "Zone 1 · hours",
+          "z1_name": "Zone 2 · name",
+          "z1_price": "Zone 2 · price per kWh",
+          "z1_hours": "Zone 2 · hours",
+          "z2_name": "Zone 3 · name",
+          "z2_price": "Zone 3 · price per kWh",
+          "z2_hours": "Zone 3 · hours",
+          "z3_name": "Zone 4 · name",
+          "z3_price": "Zone 4 · price per kWh",
+          "z3_hours": "Zone 4 · hours",
+          "z4_name": "Zone 5 · name",
+          "z4_price": "Zone 5 · price per kWh",
+          "z4_hours": "Zone 5 · hours",
+          "z5_name": "Zone 6 · name",
+          "z5_price": "Zone 6 · price per kWh",
+          "z5_hours": "Zone 6 · hours",
+          "z6_name": "Zone 7 · name",
+          "z6_price": "Zone 7 · price per kWh",
+          "z6_hours": "Zone 7 · hours",
+          "z7_name": "Zone 8 · name",
+          "z7_price": "Zone 8 · price per kWh",
+          "z7_hours": "Zone 8 · hours"
+        },
+        "data_description": {}
+      }
+    },
+    "error": {
+      "tariff_invalid": "The tariff is not valid — see the message above."
+    }
+  }
+}
