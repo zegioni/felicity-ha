@@ -124,7 +124,35 @@ The **Solar** panel appears in the sidebar, and the cards appear in the dashboar
 
 - **Tariff:** open **Solar → Tariff**, pick a template or set your zones, and press **Save**. The first save also sets up the Energy dashboard, if it is empty. You can also use **Configure → Electricity tariff** on the integration.
 - **Battery reserve:** empty means the inverter's own *Low Batt* level (IVAM) or off-grid discharge depth (IVGM).
-- **Matter plugs:** **Configure → Matter outlets** creates the *Felicity Home / Battery / Grid* devices. They never control the inverter; switching one off only hides its numbers.
+- **Matter plugs:** see [Matter plugs (Apple Home)](#matter-plugs-apple-home) below.
+
+### Matter plugs (Apple Home)
+
+Your inverter can show up in Apple Home (or Google Home, Alexa, SmartThings) as three smart plugs with live power
+and energy: **Felicity Home** (what the home uses), **Felicity Battery** (battery discharge) and **Felicity Grid**
+(bought from the grid). The plugs never control the inverter: switching one off only sets its numbers to 0.
+
+Home Assistant does not speak Matter to Apple Home by itself, so a **Matter bridge** is needed. These steps use
+[Matterbridge](https://github.com/Luligu/matterbridge) with its Home Assistant plugin.
+
+1. **Create the plugs.** In Home Assistant open **Settings → Devices & services → Felicity Inverter Integration Cloud →
+   Configure → Matter outlets** and turn on *Create Matter outlets*. Three devices appear: *Felicity Home*,
+   *Felicity Battery* and *Felicity Grid*, each with a switch, a power sensor and an energy sensor.
+2. **Labels are added for you.** The integration puts the label from *Label for your Matter bridge* (by default
+   `matterbridge`) on the three devices and creates the label if it doesn't exist. Leave the field empty to add no label.
+3. **Install Matterbridge** (Docker, or the Home Assistant add-on) and add the plugin **matterbridge-hass** with your
+   Home Assistant URL and a long-lived access token.
+4. **Let the plugin find the plugs.** In the plugin settings:
+   - set **filterByLabel** to the same label (`matterbridge`), so only labelled devices are bridged;
+   - make sure **entityWhiteList** (if you use it) contains `switch` and `sensor`.
+
+   Restart the plugin. The bridge combines each device's switch, power and energy into one plug.
+5. **Add the bridge to Apple Home.** Open the Matterbridge web page and scan its pairing QR code in the Home app
+   (**+ → Add Accessory**). The three Felicity plugs appear with their power and energy.
+
+Using another bridge? Give it the three devices, or the entities `switch.felicity_home`, `sensor.felicity_home_power`,
+`sensor.felicity_home_energy` and the same for `battery` and `grid`. Use a different label in step 2 if your bridge
+filters by another one.
 
 ### Widgets
 

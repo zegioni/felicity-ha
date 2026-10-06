@@ -14,7 +14,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .api import FelicityApiError, FelicityAuthError, FelicityClient
-from .const import CONF_OUTLETS, DOMAIN
+from .const import CONF_OUTLET_LABEL, CONF_OUTLETS, DEFAULT_OUTLET_LABEL, DOMAIN
 from .tariff import DEFAULT, PRESETS, remember, validate_tariff
 
 CONF_ACCEPT = "accept_risk"
@@ -102,7 +102,8 @@ class FelicityOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data={**self.config_entry.options, **user_input})
         return self.async_show_form(step_id="general", data_schema=vol.Schema({
-            vol.Optional(CONF_OUTLETS, default=self.config_entry.options.get(CONF_OUTLETS, False)): bool}))
+            vol.Optional(CONF_OUTLETS, default=self.config_entry.options.get(CONF_OUTLETS, False)): bool,
+            vol.Optional(CONF_OUTLET_LABEL, default=self.config_entry.options.get(CONF_OUTLET_LABEL, DEFAULT_OUTLET_LABEL)): str}))
 
     def _save(self, t: dict) -> dict:
         return remember(self.config_entry.options, t, dt_util.now())

@@ -12,6 +12,7 @@ from __future__ import annotations
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import UnitOfEnergy, UnitOfPower
+from homeassistant.helpers import device_registry as dr, label_registry as lr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -41,6 +42,22 @@ def outlet_entities(coordinator, sn: str) -> tuple[list, list]:
         switches.append(sw)
         sensors += [FelicityOutletPower(coordinator, sn, oid, sw), FelicityOutletEnergy(coordinator, sn, oid, sw)]
     return switches, sensors
+
+
+def label_outlets(hass, sns, name: str) -> None:
+    """Put the bridge's label on the outlet devices (creating the label if needed), so a bridge that picks devices by
+    label (matterbridge-hass: filterByLabel) finds them. Other labels are left alone; an empty name adds none."""
+    name = (name or "").strip()
+    if not name:
+        return
+    labels = lr.async_get(hass)
+    label = labels.async_get_label_by_name(name) or labels.async_create(name, icon="mdi:bridge")
+    devices = dr.async_get(hass)
+    for sn in sns:
+        for oid in OUTLETS:
+            device = devices.async_get_device(identifiers={(DOMAIN, f"{sn}_outlet_{oid}")})
+            if device and label.label_id not in device.labels:
+                devices.async_update_device(device.id, labels=device.labels | {label.label_id})
 
 
 def _device(sn: str, oid: str) -> DeviceInfo:

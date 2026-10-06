@@ -40,10 +40,12 @@
       "general": {
         "title": "Matter outlets",
         "data": {
-          "matter_outlets": "Create Matter outlets (Home / Battery / Grid)"
+          "matter_outlets": "Create Matter outlets (Home / Battery / Grid)",
+          "matter_label": "Label for your Matter bridge"
         },
         "data_description": {
-          "matter_outlets": "Three virtual smart plugs with power and energy, for exposing through a Matter bridge. They never control the inverter."
+          "matter_outlets": "Three virtual smart plugs with power and energy, for exposing through a Matter bridge. They never control the inverter.",
+          "matter_label": "Put on the three outlet devices so the bridge finds them. matterbridge (Home Assistant plugin) uses the label set in its 'filterByLabel', by default matterbridge. Leave empty to add no label."
         }
       },
       "tariff": {

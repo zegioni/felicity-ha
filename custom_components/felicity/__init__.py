@@ -17,11 +17,11 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import FelicityClient
-from .const import CONF_OUTLETS, DOMAIN
+from .const import CONF_OUTLET_LABEL, CONF_OUTLETS, DEFAULT_OUTLET_LABEL, DOMAIN
 from .coordinator import FelicityCoordinator
 from .cost import zone_signature
 from .energy import after_tariff_saved
-from .outlets import outlet_entities
+from .outlets import label_outlets, outlet_entities
 from .tariff import default_for
 from .views import views
 
@@ -69,6 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    if coordinator.outlets_on:
+        label_outlets(hass, coordinator.inverters, entry.options.get(CONF_OUTLET_LABEL, DEFAULT_OUTLET_LABEL))
     if entry.options.get("tariff_history"):  # a tariff was saved: keep the Energy dashboard in step
         entry.async_create_background_task(hass, after_tariff_saved(hass, coordinator), "felicity energy sync")
     return True
@@ -82,6 +84,8 @@ async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if bool(entry.options.get(CONF_OUTLETS)) != coordinator.outlets_on or zone_signature(tariff) != zone_signature(coordinator.tariff):
         await hass.config_entries.async_reload(entry.entry_id)
         return
+    if coordinator.outlets_on:
+        label_outlets(hass, coordinator.inverters, entry.options.get(CONF_OUTLET_LABEL, DEFAULT_OUTLET_LABEL))
     if tariff != coordinator.tariff:
         await coordinator.set_tariff(tariff)
     if entry.options.get("tariff_history"):  # also when a tariff was saved unchanged (e.g. the defaults, first time)
