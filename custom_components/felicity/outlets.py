@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import UnitOfEnergy, UnitOfPower
+from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower
 from homeassistant.helpers import device_registry as dr, label_registry as lr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -41,6 +41,8 @@ def outlet_entities(coordinator, sn: str) -> tuple[list, list]:
         sw = FelicityOutletSwitch(sn, oid)
         switches.append(sw)
         sensors += [FelicityOutletPower(coordinator, sn, oid, sw), FelicityOutletEnergy(coordinator, sn, oid, sw)]
+        if oid == "battery":  # matterbridge turns a battery sensor into the plug's Matter power source (%)
+            sensors.append(FelicityOutletBatteryLevel(coordinator, sn, oid, sw))
     return switches, sensors
 
 
@@ -149,3 +151,21 @@ class FelicityOutletEnergy(_OutletSensor):
         energy = self._data["energy"]
         values = [energy.get(k) for k in OUTLETS[self._oid][2] if energy.get(k) not in (None, "")]
         return round(sum(_f(v) for v in values), 2) if values else None  # no record yet: unknown, not 0
+
+
+class FelicityOutletBatteryLevel(_OutletSensor):
+    """The battery's SOC on the Battery outlet; independent of the switch (0 % would read as an empty battery)."""
+
+    _attr_name = "Battery level"
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, coordinator, sn, oid, switch) -> None:
+        super().__init__(coordinator, sn, oid, switch)
+        self._attr_unique_id = f"{sn}_outlet_{oid}_battery_level"
+
+    @property
+    def native_value(self):
+        soc = (self._data.get("live") or {}).get("emsSoc")
+        return None if soc in (None, "") else round(_f(soc))

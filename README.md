@@ -130,7 +130,8 @@ The **Solar** panel appears in the sidebar, and the cards appear in the dashboar
 
 Your inverter can show up in Apple Home (or Google Home, Alexa, SmartThings) as three smart plugs with live power
 and energy: **Felicity Home** (what the home uses), **Felicity Battery** (battery discharge) and **Felicity Grid**
-(bought from the grid). The plugs never control the inverter: switching one off only sets its numbers to 0.
+(bought from the grid). *Felicity Battery* also carries the battery level (%), which Apple Home shows in the plug's
+details. The plugs never control the inverter: switching one off only sets its power and energy to 0.
 
 Home Assistant does not speak Matter to Apple Home by itself, so a **Matter bridge** is needed. These steps use
 [Matterbridge](https://github.com/Luligu/matterbridge) with its Home Assistant plugin.
