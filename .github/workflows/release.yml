@@ -1,0 +1,20 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    name: Attach felicity.zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # HACS (zip_release) unpacks the archive straight into custom_components/felicity
+      - run: cd custom_components/felicity && zip -r "$GITHUB_WORKSPACE/felicity.zip" . -x '__pycache__/*' '*/__pycache__/*'
+      - run: gh release upload "${{ github.event.release.tag_name }}" felicity.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

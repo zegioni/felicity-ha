@@ -1,4 +1,6 @@
 {
   "name": "Felicity Inverter Integration Cloud",
-  "homeassistant": "2026.6.0"
+  "homeassistant": "2026.6.0",
+  "zip_release": true,
+  "filename": "felicity.zip"
 }
