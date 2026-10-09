@@ -368,7 +368,8 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         """A calendar month (YYYY-MM) by tariff zone: its kept days, plus today while it is the current month.
         The savings ("sav") cover finished days only: during a day, grid energy stored in the battery counts as a loss."""
         kept = sorted((d, s) for d, s in (self.days.get(sn) or {}).items()
-                      if d.startswith(month) and s.get("v") == DAYS_VERSION and not s.get("empty"))
+                      if d.startswith(month) and s.get("v") == DAYS_VERSION and not s.get("empty")
+                      and (s["grid_kwh"] > 0.01 or s["home_kwh"] > 0.01))  # records, but no energy: the inverter was off
         done = [s for _, s in kept]
         prev = self._prev.get(sn)  # yesterday until it is kept (the first minutes after midnight)
         if prev and prev["date"].startswith(month) and not (self.days.get(sn) or {}).get(prev["date"]):
