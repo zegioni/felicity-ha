@@ -629,7 +629,8 @@ class FelicityFlowCard extends HTMLElement {
     let eta = "";
     const at = (h) => h < 24 ? ", ~" + CLOCK(Date.now() + h * 36e5) : "";
     if (soc !== null && !charging && rt && rt.hours !== null) {
-      eta = `Lasts about <b>${DUR(rt.hours)}</b> at your usage (until ${reserve}%${at(rt.hours)})<br><small>average home use ${FMT(rt.avg_load_w)} over the last ${rt.window_min} min</small>`;
+      eta = `Lasts about <b>${DUR(rt.hours)}</b> at your usage (until ${reserve}%${at(rt.hours)})<br><small>${rt.basis === "profile" ? `by your usual use hour by hour (last ${rt.profile_days} day${rt.profile_days === 1 ? "" : "s"} and today)`
+        : `average home use ${FMT(rt.avg_load_w)} over the last ${Math.round(rt.window_min / 60)} h`}</small>`;
     } else if (soc !== null && discharging) {
       const h = ((soc - reserve) / 100) * cap * 1000 / Math.abs(bat);
       if (h > 0) eta = `Lasts about <b>${DUR(h)}</b> at this usage (until ${reserve}%${at(h)})`;

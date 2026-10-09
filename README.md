@@ -47,7 +47,7 @@ It is built and used on a real home system: an **IVAM6048** inverter with a **31
 | Feature | What you get |
 |---|---|
 | ⚡ **Live energy flow** | Solar (per string, with V and A), grid, battery, home and the GEN / smart-load port, with today's kWh next to each, like the Sunsynk card |
-| 🔋 **Battery you can read** | Level, voltage, current and temperature; how long it lasts at your usage down to the inverter's own reserve, or when it will be full at the current charging power, with the clock time |
+| 🔋 **Battery you can read** | Level, voltage, current and temperature; how long it lasts at your usage down to the inverter's own reserve (from your usual use hour by hour), or when it will be full at the current charging power, with the clock time |
 | 💸 **Tariffs and real costs** | Ukrainian 1/2/3-zone presets (to the kopeck: 6.48 / 4.32 / 1.728 ₴), Spain 2.0TD, UK Economy 7, your own zones or a dynamic price (Nord Pool, ENTSO-E, Tibber…). Grid import and cost per zone for today, yesterday or any month, to check against the bill, and what the battery saved |
 | 📊 **Energy dashboard, set up for you** | One grid connection per tariff zone with its price, solar, battery with SOC and live power flows, kept in step with your tariff |
 | 🛠 **All inverter settings** | Laid out like the Felicity app and editable, checked against the inverter's own limits; risky ones need a second confirmation |
@@ -185,7 +185,7 @@ All of them find their data by themselves; no entity configuration is needed.
 | `…_grid_cost_today`, `…_saved_today` | Money: today's grid cost, and what solar and the battery saved |
 | `…_grid_import_this_month_<zone>`, `…_grid_cost_this_month` | This calendar month so far, today included |
 | `…_saved_this_month`, `…_battery_saved_this_month` | Savings over this month's finished days |
-| `…_battery_runtime` | Hours the battery would carry the home down to the reserve |
+| `…_battery_runtime` | Hours the battery would carry the home down to the reserve, by your usual use hour by hour |
 | `…_last_data` | When the cloud received the latest record (diagnostic); the card's *Updated … ago* counts from it |
 | **Number / select / switch controls** | Inverter settings on the device page (risky ones only while *Unlock risky settings* is on) |
 

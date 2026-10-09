@@ -273,7 +273,7 @@ class SavedSensor(_Money):
 
 
 class BatteryRuntimeSensor(_InverterSensor):
-    """Hours the battery would carry the home down to the reserve at the last half hour's average use."""
+    """Hours the battery would carry the home down to the reserve at its usual use, hour by hour."""
 
     _attr_name = "Battery runtime"
     _attr_icon = "mdi:battery-clock-outline"

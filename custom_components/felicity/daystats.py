@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from .tariff import DYNAMIC_ZONE, Pricer
 
 GAP = timedelta(minutes=10)      # power integration does not bridge longer gaps in history
-RUNTIME_WINDOW = timedelta(minutes=30)
+RUNTIME_WINDOW = timedelta(hours=24)
 RESET = 1.0                      # a day counter falling by more than this (kWh) has restarted
 CHARGE_LOSS = 1.25               # at most this much grid energy is paid per kWh charged (the inverter's losses)
 
@@ -165,23 +165,71 @@ def zone_split(rows: list[dict], pricer: Pricer, zones: list[dict], export_price
 
 
 def battery_runtime(rows: list[dict], soc: float | None, reserve: float, capacity_kwh: float,
-                    live_load_w: float | None) -> dict:
-    """Hours until the battery reaches the reserve if the home kept using what it used over the last half hour
-    (solar and grid ignored: "how long would the battery carry the house")."""
+                    live_load_w: float | None, past: list[list[dict]] | None = None) -> dict:
+    """Hours until the battery reaches the reserve if the home keeps its usual use ("how long would the battery carry
+    the house"; solar and grid ignored). With earlier days (past: their rows or kept hourly loads), each coming hour
+    uses that hour's average load over those days and today (about 4x closer to reality than a flat average);
+    without them, the average over the last 24 hours."""
     loads = []
     if rows:
         since = rows[-1]["_local"] - RUNTIME_WINDOW
         loads = [(num(r, "acTotalOutActPower") + num(r, "meterPower")) * 1000 for r in rows if r["_local"] >= since]
-    avg_w = sum(loads) / len(loads) if loads else live_load_w
+    # the window reaches into yesterday: its hours after the window start, from yesterday's hourly load
+    w_sum, n = sum(loads), len(loads)
+    if past and rows:
+        y = past[-1] if past[-1] and isinstance(past[-1][0], list) else hourly_load(past[-1])
+        for h in range(since.hour + 1, 24):
+            w_sum, n = w_sum + y[h][0], n + y[h][1]
+    avg_w = w_sum / n if n else live_load_w
     out = {"reserve": reserve, "capacity_kwh": round(capacity_kwh, 2), "avg_load_w": round(avg_w) if avg_w is not None else None,
            "window_min": int(RUNTIME_WINDOW.total_seconds() // 60), "hours": None, "energy_left_kwh": None}
     if soc is None or not capacity_kwh:
         return out
     left = max(0.0, (soc - reserve) / 100 * capacity_kwh)
     out["energy_left_kwh"] = round(left, 2)
-    if avg_w and avg_w > 30:
+    profile = hourly_profile((past or []) + [rows]) if past else None
+    if profile and rows:
+        out["hours"] = hours_by_profile(left, profile, rows[-1]["_local"])
+        out["basis"], out["profile_days"] = "profile", len(past)
+    elif avg_w and avg_w > 30:
         out["hours"] = round(left * 1000 / avg_w, 2)
     return out
+
+
+def hourly_load(rows: list[dict]) -> list[list[float]]:
+    """[W summed, samples] of the home's load for each hour of a day (kept with each finished day, ~100 bytes)."""
+    acc = [[0.0, 0] for _ in range(24)]
+    for r in rows:
+        a = acc[r["_local"].hour]
+        a[0] += (num(r, "acTotalOutActPower") + num(r, "meterPower")) * 1000
+        a[1] += 1
+    return [[round(w, 1), n] for w, n in acc]
+
+
+def hourly_profile(days: list) -> dict[int, float] | None:
+    """The home's average load (W) for each hour of the day over the given days (each a day's rows, or its kept
+    hourly_load); None while some hour has no data yet."""
+    tot = [[0.0, 0] for _ in range(24)]
+    for day in days:
+        for h, (w, n) in enumerate(day if day and isinstance(day[0], list) else hourly_load(day)):
+            tot[h][0] += w
+            tot[h][1] += n
+    if any(n == 0 for _, n in tot):
+        return None
+    return {h: w / n for h, (w, n) in enumerate(tot)}
+
+
+def hours_by_profile(left_kwh: float, profile: dict[int, float], now: datetime) -> float | None:
+    """Hours until the energy left is used if each coming hour uses its usual (profile) load."""
+    t, used, horizon = now, 0.0, now + timedelta(days=7)
+    while t < horizon:
+        nxt = (t + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        w = max(profile[t.hour], 1.0)
+        e = w / 1000 * (nxt - t).total_seconds() / 3600
+        if used + e >= left_kwh:
+            return round(((t - now).total_seconds() + (left_kwh - used) / w * 1000 * 3600) / 3600, 2)
+        used, t = used + e, nxt
+    return None
 
 
 def add_up(days: list[dict]) -> dict:

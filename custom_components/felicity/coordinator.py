@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import FelicityApiError, FelicityAuthError, FelicityClient, history_time, powers_in_kw, scale_powers
 from .const import CONF_OUTLETS, DOMAIN, ENERGY_INTERVAL_SECONDS, SCAN_INTERVAL_SECONDS, SETTINGS_INTERVAL_SECONDS
-from .daystats import add_up, battery_runtime, day_totals, zone_split
+from .daystats import add_up, battery_runtime, day_totals, hourly_load, zone_split
 from .settings import ECO_RULES, is_risky, validate, validate_rule
 from .tariff import Pricer, day_bands, versions, zone_at
 
@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 HISTORY_DAYS_CACHED = 8              # one day of minute history is about 4 MB
 FINAL_AFTER = timedelta(minutes=15)  # the cloud uploads a day's last minutes a little after midnight
 METERS = ("solar", "grid_export", "battery_charge", "battery_discharge")
-DAYS_VERSION = 6                     # bump when a day summary changes, so kept days are computed again
+DAYS_VERSION = 7                     # bump when a day summary changes, so kept days are computed again
 BACKFILL_PAUSE = 10                  # seconds between two past days fetched in the background
 BACKFILL_EMPTY_STOP = 31             # past days without data in a row: the start of the history is reached
 BACKFILL_MAX_DAYS = 92               # about three months back
@@ -327,6 +327,8 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             return None if kept.get("empty") else kept
         rows = await self.history(sn, day, cache=cache)
         summary = self._summary((await self.breakdown(sn, day, rows=rows))[0]) if rows else {"v": DAYS_VERSION, "empty": True}
+        if rows:
+            summary["hourly_load"] = hourly_load(rows)  # for the battery runtime estimate
         if dt_util.now() > day_end(day) + FINAL_AFTER:
             summary["at"] = dt_util.now().isoformat()
             self.days.setdefault(sn, {})[day] = summary
@@ -436,7 +438,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self.month[sn] = self.month_summary(sn, day[:7])
 
     def runtime_now(self, sn: str) -> dict:
-        """Battery runtime with the latest SOC and the last half hour's average home use."""
+        """Battery runtime with the latest SOC and the home's usual use by hour (the last 7 kept days and today)."""
         live = ((self.data or {}).get(sn) or {}).get("live", {})
 
         def num(k):
@@ -446,8 +448,13 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                 return None
         load = (num("acTotalOutActPower") or 0) + (num("meterPower") or 0)
         reserve, source = self.reserve(sn)
+        past = []
+        for i in range(7, 0, -1):
+            kept = self._kept(sn, (dt_util.now() - timedelta(days=i)).strftime("%Y-%m-%d"))
+            if kept and kept.get("hourly_load"):
+                past.append(kept["hourly_load"])
         return {**battery_runtime(self._recent.get(sn, []), num("emsSoc"), reserve, self.capacity_kwh(sn),
-                                  load if live else None), "reserve_source": source}
+                                  load if live else None, past=past or None), "reserve_source": source}
 
     async def set_tariff(self, tariff: dict) -> None:
         """Use a newly saved tariff right away (called by the options update listener)."""
