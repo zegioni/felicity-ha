@@ -658,6 +658,9 @@ class FelicityFlowCard extends HTMLElement {
     const phases = this._idx["live.acSInPower"] ? `<div class="chips">${["acRInPower", "acSInPower", "acTInPower"].map((f, i) =>
       `<div class="chip" style="border-color:${COLOR.grid}55"><span>L${i + 1}</span>${FMT(this._num(this._idx["live." + f]) ?? 0)}</div>`).join("")}</div>` : "";
     const cur = ok ? T.tariff.currency : null, day = ok && !T.day.error ? T.day : null, now = ok ? T.now : null;
+    // today's kWh: the integration's day figures (the same as the price panel, the month view and the history), else the cloud's
+    const E = day && day.battery ? { pv: day.solar_kwh, buy: day.grid_kwh, sell: day.export_kwh, chg: day.battery.in_kwh, dis: day.battery.out_kwh, home: day.home_kwh }
+      : { pv: v.pv_today, buy: v.grid_import_today, sell: v.grid_export_today, chg: v.battery_charge_today, dis: v.battery_discharge_today, home: v.load_today };
     const pricePill = now && now.price !== null ? `<div class="pz" style="--z:${now.zone ? now.zone.color : COLOR.grid}"><i></i>${now.zone ? ESC(now.zone.name) + " · " : ""}${PRICE(now.price, cur)}</div>` : "";
     return `<div class="title"><b>${ESC(this._cfg.title || "Home energy")}</b><span>${this._updatedText()}</span></div>
       <div class="top">
@@ -686,13 +689,13 @@ class FelicityFlowCard extends HTMLElement {
           </svg>
           <div class="invnode">${ICON.inverter()}</div>
           ${node("sun", ICON.sun(pv > ACTIVE_W), "Solar", FMT(pv), pv > ACTIVE_W ? "producing now" : "not producing", COLOR.sun,
-            (pvChips ? `<div class="chips">${pvChips}</div>` : "") + today([["Today", KWH(v.pv_today)]]))}
+            (pvChips ? `<div class="chips">${pvChips}</div>` : "") + today([["Today", KWH(E.pv)]]))}
           ${node("grid", ICON.grid(), "Grid", FMT(grid), grid > ACTIVE_W ? "buying from grid" : grid < -ACTIVE_W ? "selling to grid" : "not used now", COLOR.grid,
-            phases + pricePill + today([["Bought today", KWH(v.grid_import_today)], day && ["Cost today", MONEY(day.grid_cost, cur)],
-              v.grid_export_today > MIN_KWH && ["Sold today", KWH(v.grid_export_today)]]))}
+            phases + pricePill + today([["Bought today", KWH(E.buy)], day && ["Cost today", MONEY(day.grid_cost, cur)],
+              E.sell > MIN_KWH && ["Sold today", KWH(E.sell)]]))}
           ${node("bat", ICON.battery(soc, charging), "Battery", FMT(bat), charging ? "charging" : discharging ? "powering the home" : "resting", socCol,
-            today([["Charged today", KWH(v.battery_charge_today), COLOR.charge], ["Used today", KWH(v.battery_discharge_today), COLOR.use]]))}
-          ${node("home", ICON.home(), "Home", FMT(load), "using now", COLOR.home, today([["Used today", KWH(v.load_today)]]))}
+            today([["Charged today", KWH(E.chg), COLOR.charge], ["Used today", KWH(E.dis), COLOR.use]]))}
+          ${node("home", ICON.home(), "Home", FMT(load), "using now", COLOR.home, today([["Used today", KWH(E.home)]]))}
           ${port ? node("port", isSmart ? ICON.plug() : ICON.generator(), isSmart ? "Smart load" : "Generator", FMT(portPw),
             portPw > ACTIVE_W ? (isSmart ? "load is on" : "generator running") : (isSmart ? "load is off" : "generator off"), COLOR.port) : ""}
         </div></div>
@@ -732,9 +735,11 @@ class FelicityFlowCard extends HTMLElement {
     if (!h || !h.rows.length) return nav + this._empty(h);
     const r = h.rows, k = (i, sign) => this._kwh(r, i, sign).toFixed(1);
     const T = this._tar(date), ok = T && !T.error, zs = ok ? this._zones(T) : {};
-    // grid import from the inverter's own counter when known (the zone split and the bill use it), else from power
-    const bought = ok && !T.day.error ? (+T.day.grid_kwh).toFixed(1) : k(COL.grid, 1);
-    const e = { pv: k(COL.pv, 1), pv1: k(COL.pv1, 1), pv2: k(COL.pv2, 1), bought, charged: k(COL.bat, 1), used: k(COL.bat, -1), home: k(COL.home, 1) };
+    // the day's kWh from the integration's day figures (counter-based; the same as the price panel and the month
+    // view) when known, else integrated from the chart's power
+    const D = ok && !T.day.error && T.day.battery ? T.day : null, f = (x) => (+x).toFixed(1);
+    const e = { pv: D ? f(D.solar_kwh) : k(COL.pv, 1), pv1: k(COL.pv1, 1), pv2: k(COL.pv2, 1), bought: D ? f(D.grid_kwh) : k(COL.grid, 1),
+      charged: D ? f(D.battery.in_kwh) : k(COL.bat, 1), used: D ? f(D.battery.out_kwh) : k(COL.bat, -1), home: D ? f(D.home_kwh) : k(COL.home, 1) };
     const zoneBands = ok ? T.bands.map(([from, to, id]) => ({ from, to, col: (zs[id] || {}).color || "#888", op: 0.13 })) : [];
     const cost = ok && !T.day.error ? `<i>· <b>${MONEY(T.day.grid_cost, T.tariff.currency)}</b></i>` : "";
     const totals = (items) => `<span class="tot">${items.map(([n, x, c]) => `<i style="color:${c}">${n} <b>${x}</b></i>`).join("")}<i>kWh</i></span>`;

@@ -142,7 +142,30 @@ class SeriesView(_View):
         self._cache: dict[str, tuple[float, bool, list]] = {}  # key -> (fetched, final, row); a few hundred small rows
         self._sem = asyncio.Semaphore(2)
 
+    @staticmethod
+    def _ours(coordinator: FelicityCoordinator, sn: str, unit: str, date: str) -> list | None:
+        """The day / month from the integration's own day figures (the same as the price panel and the month view),
+        when it has them; the cloud's totals are the fallback for older days."""
+        label = date[:7] if unit == "month" else date
+        if unit == "month":
+            s = coordinator.month_summary(sn, label)
+            if not s["days"]:
+                return None
+        elif date == today():
+            s = coordinator.costs.get(sn)
+            if not s or s.get("date") != date:
+                return None
+        else:
+            s = coordinator._kept(sn, date)
+            if not s or s.get("empty"):
+                return None
+        b = s.get("battery") or {}
+        return [label, s["grid_kwh"], s.get("export_kwh") or 0.0, s.get("solar_kwh") or 0.0,
+                b.get("in_kwh") or 0.0, b.get("out_kwh") or 0.0, s["home_kwh"], 0.0]
+
     async def _one(self, coordinator: FelicityCoordinator, sn: str, unit: str, date: str) -> list:
+        if (ours := self._ours(coordinator, sn, unit, date)) is not None:
+            return [ours[0], *(round(v, 2) for v in ours[1:])]
         key = f"{sn}:{unit}:{date}"
         hit = self._cache.get(key)
         if hit and (hit[1] or time.time() - hit[0] < 300):

@@ -213,6 +213,10 @@ Only the IVAM is tested on hardware; the others are built from the API documenta
 
 ## Good to know
 
+- **One set of daily figures.** Every kWh figure (the flow, the day charts, the price panel, months, history and the
+  Energy-dashboard sensors) comes from the same day figures. Grid import follows the inverter's own counter, the same
+  as the Felicity app; home and battery energy are scaled to it, so they add up. Your utility meter may differ by a few
+  per cent.
 - **How fresh the data is.** Data comes from the Felicity cloud (Open API):
   - the inverter uploads about one record per minute, and a record reaches the API about 1–2 minutes after it was measured;
   - the integration polls every 15 seconds, so it shows each record as soon as the cloud has it;

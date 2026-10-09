@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 HISTORY_DAYS_CACHED = 8              # one day of minute history is about 4 MB
 FINAL_AFTER = timedelta(minutes=15)  # the cloud uploads a day's last minutes a little after midnight
 METERS = ("solar", "grid_export", "battery_charge", "battery_discharge")
-DAYS_VERSION = 5                     # bump when a day summary changes, so kept days are computed again
+DAYS_VERSION = 6                     # bump when a day summary changes, so kept days are computed again
 BACKFILL_PAUSE = 10                  # seconds between two past days fetched in the background
 BACKFILL_EMPTY_STOP = 31             # past days without data in a row: the start of the history is reached
 BACKFILL_MAX_DAYS = 92               # about three months back
@@ -307,7 +307,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
 
     @staticmethod
     def _summary(b: dict) -> dict:
-        keys = ("grid_kwh", "grid_cost", "home_kwh", "home_cost", "export_kwh", "export_earned", "saved", "battery", "currency")
+        keys = ("grid_kwh", "grid_cost", "home_kwh", "home_cost", "export_kwh", "export_earned", "solar_kwh", "saved", "battery", "currency")
         # energy bought without a known price (a dynamic price older than the recorder keeps): cost unknown, not 0
         unpriced = any(z["grid_kwh"] > 0.01 and not z["grid_cost"] for z in b["zones"])
         return {"v": DAYS_VERSION, "zones": b["zones"], **{k: b.get(k) for k in keys}, "unpriced": unpriced}
