@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import FelicityApiError, FelicityAuthError, FelicityClient, history_time, powers_in_kw, scale_powers
 from .const import CONF_OUTLETS, DOMAIN, ENERGY_INTERVAL_SECONDS, SCAN_INTERVAL_SECONDS, SETTINGS_INTERVAL_SECONDS
-from .daystats import battery_runtime, day_totals, zone_split
+from .daystats import add_up, battery_runtime, day_totals, zone_split
 from .settings import ECO_RULES, is_risky, validate, validate_rule
 from .tariff import Pricer, day_bands, versions, zone_at
 
@@ -27,6 +27,12 @@ _LOGGER = logging.getLogger(__name__)
 HISTORY_DAYS_CACHED = 8              # one day of minute history is about 4 MB
 FINAL_AFTER = timedelta(minutes=15)  # the cloud uploads a day's last minutes a little after midnight
 METERS = ("solar", "grid_export", "battery_charge", "battery_discharge")
+DAYS_VERSION = 5                     # bump when a day summary changes, so kept days are computed again
+BACKFILL_PAUSE = 10                  # seconds between two past days fetched in the background
+BACKFILL_EMPTY_STOP = 31             # past days without data in a row: the start of the history is reached
+BACKFILL_MAX_DAYS = 92               # about three months back
+BACKFILL_EVERY = 6 * 3600            # seconds; fills in days a cloud hiccup skipped
+REVISIT_AFTER = timedelta(hours=12)  # a day kept sooner after its end is computed once more (late uploads)
 
 
 def today() -> str:
@@ -35,6 +41,10 @@ def today() -> str:
 
 def day_start(day: str) -> datetime:
     return dt_util.start_of_local_day(datetime.strptime(day, "%Y-%m-%d"))
+
+
+def day_end(day: str) -> datetime:
+    return day_start((datetime.strptime(day, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"))
 
 
 class FelicityCoordinator(DataUpdateCoordinator[dict]):
@@ -64,6 +74,13 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         # sn -> [day, {key: value}]: today's totals never go down (stored, so restarts keep it)
         self._floor: dict[str, list] = {}
         self._floor_store = Store(hass, 1, f"{DOMAIN}.floor.{entry.entry_id}")
+        # sn -> {day: split by tariff zone}: finished days, kept for the month views (stored once a day is final)
+        self.days: dict[str, dict] = {}
+        self._days_store = Store(hass, 1, f"{DOMAIN}.days.{entry.entry_id}")
+        self.month: dict[str, dict] = {}           # sn -> this month so far (kept days + today)
+        self.backfilling = False
+        self._backfill_at = 0.0
+        self._prev: dict[str, dict] = {}           # sn -> yesterday's last figures, until yesterday is kept
         self._fetching: dict[str, asyncio.Task] = {}
         self._last: dict[str, float] = {}
         self._costs_lock = asyncio.Lock()
@@ -212,8 +229,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         return rows
 
     def _keep(self, key: str, day: str, rows: list[dict]) -> None:
-        end = day_start((datetime.strptime(day, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"))
-        self._history[key] = (time.time(), bool(rows) and dt_util.now() > end + FINAL_AFTER, rows)
+        self._history[key] = (time.time(), bool(rows) and dt_util.now() > day_end(day) + FINAL_AFTER, rows)
         self._history.move_to_end(key)
         while len(self._history) > HISTORY_DAYS_CACHED:
             self._history.popitem(last=False)
@@ -263,10 +279,11 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         z = zone_at(self.tariff, dt_util.now())
         return z["price"] if z else None
 
-    async def breakdown(self, sn: str, day: str) -> tuple[dict, list[dict]]:
+    async def breakdown(self, sn: str, day: str, cache: bool = True, rows: list | None = None) -> tuple[dict, list[dict]]:
         """(the day's grid import / home use / export by tariff zone, its history rows). Every minute is priced
         with the tariff version in force at that minute; zones are those of the version in force at the end."""
-        rows = await self.history(sn, day)
+        if rows is None:
+            rows = await self.history(sn, day, cache=cache)
         start = day_start(day)
         tariff_versions = self.tariff_versions()
         pricer = Pricer(tariff_versions, await self._price_points(tariff_versions, start),
@@ -284,6 +301,93 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
 
     async def async_load_floor(self) -> None:
         self._floor = await self._floor_store.async_load() or {}
+        self.days = await self._days_store.async_load() or {}
+
+    # ---- finished days and months ----
+
+    @staticmethod
+    def _summary(b: dict) -> dict:
+        keys = ("grid_kwh", "grid_cost", "home_kwh", "home_cost", "export_kwh", "export_earned", "saved", "battery", "currency")
+        # energy bought without a known price (a dynamic price older than the recorder keeps): cost unknown, not 0
+        unpriced = any(z["grid_kwh"] > 0.01 and not z["grid_cost"] for z in b["zones"])
+        return {"v": DAYS_VERSION, "zones": b["zones"], **{k: b.get(k) for k in keys}, "unpriced": unpriced}
+
+    def _kept(self, sn: str, day: str) -> dict | None:
+        """A kept day; one kept soon after its end is computed once more after REVISIT_AFTER (late uploads)."""
+        kept = (self.days.get(sn) or {}).get(day)
+        if not kept or kept.get("v") != DAYS_VERSION:
+            return None
+        revisit = day_end(day) + REVISIT_AFTER
+        at = dt_util.parse_datetime(kept.get("at") or "")
+        return None if (at is None or at < revisit) and dt_util.now() > revisit else kept
+
+    async def day_summary(self, sn: str, day: str, cache: bool = True) -> dict | None:
+        """A past day's split by tariff zone, kept once the day is final; None for a day without data."""
+        if kept := self._kept(sn, day):
+            return None if kept.get("empty") else kept
+        rows = await self.history(sn, day, cache=cache)
+        summary = self._summary((await self.breakdown(sn, day, rows=rows))[0]) if rows else {"v": DAYS_VERSION, "empty": True}
+        if dt_util.now() > day_end(day) + FINAL_AFTER:
+            summary["at"] = dt_util.now().isoformat()
+            self.days.setdefault(sn, {})[day] = summary
+            self._days_store.async_delay_save(lambda: self.days, 30)
+        return None if summary.get("empty") else summary
+
+    async def backfill_days(self) -> None:
+        """Keep every finished day back to the first one with data; fetched one by one, gently, in the background."""
+        self.backfilling, self._backfill_at = True, time.time()
+        try:
+            for sn in self.inverters:
+                empty, day = 0, dt_util.now().date() - timedelta(days=1)
+                for _ in range(BACKFILL_MAX_DAYS):
+                    key = day.strftime("%Y-%m-%d")
+                    fetch = self._kept(sn, key) is None
+                    summary = None
+                    for attempt in range(3):
+                        try:
+                            summary = await self.day_summary(sn, key, cache=False)
+                            break
+                        except Exception as err:  # noqa: BLE001 - a cloud hiccup: try again, then skip the day
+                            _LOGGER.debug("Felicity: backfill of %s for %s failed (%s): %s", key, sn, attempt + 1, err)
+                            await asyncio.sleep(60)
+                    else:
+                        day -= timedelta(days=1)  # skipped; the next run (BACKFILL_EVERY) tries it again
+                        continue
+                    empty = empty + 1 if summary is None else 0
+                    if empty >= BACKFILL_EMPTY_STOP:
+                        break
+                    day -= timedelta(days=1)
+                    if fetch:
+                        await asyncio.sleep(BACKFILL_PAUSE)
+                self.month[sn] = self.month_summary(sn, today()[:7])
+        finally:
+            self.backfilling = False
+        self.async_update_listeners()
+
+    def month_summary(self, sn: str, month: str) -> dict:
+        """A calendar month (YYYY-MM) by tariff zone: its kept days, plus today while it is the current month.
+        The savings ("sav") cover finished days only: during a day, grid energy stored in the battery counts as a loss."""
+        kept = sorted((d, s) for d, s in (self.days.get(sn) or {}).items()
+                      if d.startswith(month) and s.get("v") == DAYS_VERSION and not s.get("empty"))
+        done = [s for _, s in kept]
+        prev = self._prev.get(sn)  # yesterday until it is kept (the first minutes after midnight)
+        if prev and prev["date"].startswith(month) and not (self.days.get(sn) or {}).get(prev["date"]):
+            done.append(prev)
+        b = self.costs.get(sn)
+        out = add_up(done + ([b] if b and b.get("date") == today() and today().startswith(month) else []))
+        sav = add_up(done)
+        out["sav"] = {k: sav[k] for k in ("home_kwh", "home_cost", "grid_cost", "export_earned", "saved", "battery", "days")}
+        out["unpriced"] = sum(1 for s in done if s.get("unpriced"))
+        first = datetime.strptime(f"{month}-01", "%Y-%m-%d").date()
+        last = min((first.replace(day=28) + timedelta(days=4)).replace(day=1), dt_util.now().date())
+        known = {d for d, s in (self.days.get(sn) or {}).items() if d.startswith(month) and s.get("v") == DAYS_VERSION}
+        out["missing"] = [d.strftime("%Y-%m-%d") for d in (first + timedelta(days=i) for i in range((last - first).days))
+                          if d.strftime("%Y-%m-%d") not in known]
+        out["per_day"] = [{"date": d, "grid_kwh": s["grid_kwh"], "grid_cost": s["grid_cost"], "saved": s["saved"],
+                           "battery_saved": (s.get("battery") or {}).get("saved"),
+                           "zones": {z["id"]: z["grid_kwh"] for z in s["zones"]}} for d, s in kept]
+        out["month"], out["currency"] = month, self.tariff.get("currency", "UAH")
+        return out
 
     async def refresh_costs(self) -> None:
         async with self._costs_lock:  # a refresh started with an old tariff finishes before one with the new
@@ -293,6 +397,9 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
 
     async def _refresh_costs(self, sn: str) -> None:
         day = today()
+        old = self.costs.get(sn)
+        if old and old.get("date") != day:
+            self._prev[sn] = old
         try:
             b, rows = await self.breakdown(sn, day)
             totals = day_totals(rows)
@@ -317,6 +424,15 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self.costs[sn] = {**b, "date": day}
         self.meters[sn] = {"date": day, **{k: keep(f"meter:{k}", totals[k]) for k in METERS}}
         self._recent[sn] = rows
+        yesterday = (dt_util.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if self._kept(sn, yesterday) is None and not self.backfilling:  # keep the day that just ended
+            try:
+                await self.day_summary(sn, yesterday)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Felicity: could not keep %s for %s: %s", yesterday, sn, err)
+        if not self.backfilling and time.time() - self._backfill_at > BACKFILL_EVERY:
+            self.config_entry.async_create_background_task(self.hass, self.backfill_days(), "felicity backfill")
+        self.month[sn] = self.month_summary(sn, day[:7])
 
     def runtime_now(self, sn: str) -> dict:
         """Battery runtime with the latest SOC and the last half hour's average home use."""

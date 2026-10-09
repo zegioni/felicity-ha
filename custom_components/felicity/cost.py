@@ -31,13 +31,14 @@ def cost_entities(hass, entry, coordinator: FelicityCoordinator) -> list[SensorE
     keep = set()
     for sn in coordinator.inverters:
         for z in zones:
-            out.append(ZoneImportSensor(coordinator, sn, z["id"]))
-            keep.add(f"{sn}_tariff_import_{z['id']}")
+            out += [ZoneImportSensor(coordinator, sn, z["id"]), MonthZoneImportSensor(coordinator, sn, z["id"])]
+            keep |= {f"{sn}_tariff_import_{z['id']}", f"{sn}_tariff_month_import_{z['id']}"}
         out += [GridCostSensor(coordinator, sn), SavedSensor(coordinator, sn), BatteryRuntimeSensor(coordinator, sn)]
+        out += [MonthMoneySensor(coordinator, sn, key, name, icon, path) for key, name, icon, path in MONTH_MONEY]
         out += [MeterSensor(coordinator, sn, key, name, icon) for key, name, icon in METERS]
     reg = er.async_get(hass)  # zones removed from the tariff: drop their sensors
     for e in er.async_entries_for_config_entry(reg, entry.entry_id):
-        if "_tariff_import_" in e.unique_id and e.unique_id not in keep:
+        if ("_tariff_import_" in e.unique_id or "_tariff_month_import_" in e.unique_id) and e.unique_id not in keep:
             reg.async_remove(e.entity_id)
     return out
 
@@ -298,4 +299,100 @@ class BatteryRuntimeSensor(_InverterSensor):
         attrs = {"felicity": "battery_runtime", "sn": self._sn, **r}
         if r["hours"] is not None:
             attrs["until"] = (dt_util.now() + timedelta(hours=r["hours"])).isoformat(timespec="minutes")
+        return attrs
+
+
+class _MonthSensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
+    """A number of this calendar month so far: the kept days plus today (available once today is computed)."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: FelicityCoordinator, sn: str, key: str) -> None:
+        super().__init__(coordinator)
+        self._sn = sn
+        self._attr_unique_id = f"{sn}_tariff_month_{key}"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, sn)})
+
+    @property
+    def _m(self) -> dict | None:
+        m = self.coordinator.month.get(self._sn)
+        return m if m and m.get("month") == today()[:7] else None
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._m is not None
+
+    @property
+    def last_reset(self):
+        return dt_util.start_of_local_day().replace(day=1)
+
+
+class MonthZoneImportSensor(_MonthSensor):
+    """Grid energy bought this month in one tariff zone (compare with the bill)."""
+
+    _attr_icon = "mdi:calendar-month"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, sn, zone_id: str) -> None:
+        super().__init__(coordinator, sn, f"import_{zone_id}")
+        self._zid = zone_id
+
+    @property
+    def name(self):
+        zone = next((z for z in self.coordinator.tariff.get("zones") or [DYNAMIC_ZONE] if z["id"] == self._zid), DYNAMIC_ZONE)
+        return f"Grid import this month ({zone['name']})"
+
+    @property
+    def _z(self) -> dict | None:
+        return next((z for z in (self._m or {}).get("zones", []) if z["id"] == self._zid), None)
+
+    @property
+    def native_value(self):
+        return self._z["grid_kwh"] if self._z else (0.0 if self._m else None)
+
+    @property
+    def extra_state_attributes(self):
+        z, m = self._z or {}, self._m or {}
+        return {"felicity": "tariff_month_import", "sn": self._sn, "zone_id": self._zid, "cost": z.get("grid_cost"),
+                "average_price": z.get("price"), "days": m.get("days"), "currency": m.get("currency")}
+
+
+# (key, name, icon, path into the month summary)
+# grid cost includes today; savings cover finished days only (during a day, energy stored in the battery is a loss)
+MONTH_MONEY = (("grid_cost", "Grid cost this month", "mdi:cash-minus", ("grid_cost",)),
+               ("saved", "Saved this month", "mdi:piggy-bank-outline", ("sav", "saved")),
+               ("battery_saved", "Battery saved this month", "mdi:battery-heart-variant", ("sav", "battery", "saved")))
+
+
+class MonthMoneySensor(_MonthSensor):
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator, sn, key: str, name: str, icon: str, path: tuple) -> None:
+        super().__init__(coordinator, sn, key)
+        self._attr_name, self._attr_icon, self._path = name, icon, path
+
+    @property
+    def native_unit_of_measurement(self):
+        return self.coordinator.tariff.get("currency", "UAH")
+
+    @property
+    def native_value(self):
+        v = self._m
+        for k in self._path:
+            v = (v or {}).get(k)
+        return v
+
+    @property
+    def extra_state_attributes(self):
+        m = self._m or {}
+        attrs = {"felicity": f"tariff_month_{self._path[-1]}", "sn": self._sn, "month": m.get("month"), "days": m.get("days")}
+        if self._path[0] == "sav":
+            attrs["finished_days"] = (m.get("sav") or {}).get("days")
+        if "battery" in self._path:
+            attrs.update({k: ((m.get("sav") or {}).get("battery") or {}).get(k) for k in ("in_kwh", "in_cost", "out_kwh", "out_value")})
         return attrs

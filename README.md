@@ -48,7 +48,7 @@ It is built and used on a real home system: an **IVAM6048** inverter with a **31
 |---|---|
 | ⚡ **Live energy flow** | Solar (per string, with V and A), grid, battery, home and the GEN / smart-load port, with today's kWh next to each, like the Sunsynk card |
 | 🔋 **Battery you can read** | Level, voltage, current and temperature; how long it lasts at your usage down to the inverter's own reserve, or when it will be full at the current charging power, with the clock time |
-| 💸 **Tariffs and real costs** | Ukrainian 1/2/3-zone presets (to the kopeck: 6.48 / 4.32 / 1.728 ₴), Spain 2.0TD, UK Economy 7, your own zones or a dynamic price (Nord Pool, ENTSO-E, Tibber…) |
+| 💸 **Tariffs and real costs** | Ukrainian 1/2/3-zone presets (to the kopeck: 6.48 / 4.32 / 1.728 ₴), Spain 2.0TD, UK Economy 7, your own zones or a dynamic price (Nord Pool, ENTSO-E, Tibber…). Grid import and cost per zone for today, yesterday or any month, to check against the bill, and what the battery saved |
 | 📊 **Energy dashboard, set up for you** | One grid connection per tariff zone with its price, solar, battery with SOC and live power flows, kept in step with your tariff |
 | 🛠 **All inverter settings** | Laid out like the Felicity app and editable, checked against the inverter's own limits; risky ones need a second confirmation |
 | 🕑 **Work mode** | The time-of-use schedule on a 24-hour timeline, over your tariff zones, with a hint when grid charging runs in an expensive zone |
@@ -82,6 +82,8 @@ midnight, weekdays-only or weekend-only hours.
 - **Week preview and warnings.** A week preview shows the result, and overlapping hours are flagged.
 - **Price changes apply at once,** without a restart. A change made mid-day applies from that minute; earlier minutes and past days keep the prices they had.
 - **The split by zone is exact.** It uses the inverter's own grid-import counter, not estimates from power samples. The Ukrainian presets match a real bill to the kopeck (the night rate is 1.728 ₴, not the 1.73 printed on it).
+- **Days and months.** Switch between today, yesterday, this month and last month; *Cost by month* lists every day with its kWh per zone, to compare with the bill. Past days are fetched once in the background and kept.
+- **Where the savings come from.** Your home's use at zone prices, what you paid for the grid, and the battery's part: what charging it from the grid cost (losses included) and what its energy would have cost in the zones it was used.
 
 <img src="docs/images/tariff.png" alt="Tariff tab: zone editor with week preview, cost by day, Energy dashboard status" width="100%">
 
@@ -169,7 +171,7 @@ All of them find their data by themselves; no entity configuration is needed.
 | `felicity-settings-card` | Inverter settings |
 | `felicity-tou-card` | The time-of-use schedule |
 | `felicity-price-card` | Price now, next zone, today's cost by zone |
-| `felicity-tariff-card` | The tariff editor, cost by day, Energy dashboard set-up |
+| `felicity-tariff-card` | The tariff editor, cost by day and by month, Energy dashboard set-up |
 
 ### Entities
 
@@ -181,6 +183,8 @@ All of them find their data by themselves; no entity configuration is needed.
 | `…_grid_import_today_<zone>` | Grid import per tariff zone (Energy dashboard) |
 | `…_energy_solar_today`, `…_energy_battery_charged_today`, `…_energy_battery_discharged_today`, `…_energy_sold_to_grid_today` | Energy dashboard meters; they never go down within a day |
 | `…_grid_cost_today`, `…_saved_today` | Money: today's grid cost, and what solar and the battery saved |
+| `…_grid_import_this_month_<zone>`, `…_grid_cost_this_month` | This calendar month so far, today included |
+| `…_saved_this_month`, `…_battery_saved_this_month` | Savings over this month's finished days |
 | `…_battery_runtime` | Hours the battery would carry the home down to the reserve |
 | `…_last_data` | When the cloud received the latest record (diagnostic); the card's *Updated … ago* counts from it |
 | **Number / select / switch controls** | Inverter settings on the device page (risky ones only while *Unlock risky settings* is on) |

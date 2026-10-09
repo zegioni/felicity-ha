@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 import time
 from datetime import datetime, timedelta
@@ -33,7 +34,7 @@ ENERGY_KEYS = {"gridInput": "grid_import", "feedOutput": "grid_export", "generat
 
 
 def views(hass: HomeAssistant) -> list[HomeAssistantView]:
-    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass)]
+    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass)]
 
 
 class BadRequest(Exception):
@@ -276,4 +277,21 @@ class TariffView(_View):
             reload = zone_signature(tariff) != zone_signature(coordinator.tariff)
             self.hass.config_entries.async_update_entry(entry, options=remember(entry.options, tariff, dt_util.now()))
             return {"ok": True, "reload": reload, "tariff": tariff}
+        return await self._run(answer())
+
+
+class PeriodView(_View):
+    """GET /api/felicity/period?sn=&month=YYYY-MM -> a calendar month by tariff zone (grid import, money, the battery,
+    savings) and its days; today counts while it is the current month. Days not yet fetched are listed in "missing"."""
+
+    url = "/api/felicity/period"
+    name = "api:felicity:period"
+
+    async def get(self, request: web.Request) -> web.Response:
+        async def answer():
+            coordinator, sn = pick_inverter(self.hass, request.query.get("sn"))
+            month = request.query.get("month") or today()[:7]
+            if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+                raise BadRequest("month must be YYYY-MM")
+            return {**coordinator.month_summary(sn, month), "sn": sn, "backfilling": coordinator.backfilling}
         return await self._run(answer())

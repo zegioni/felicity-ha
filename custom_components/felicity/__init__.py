@@ -69,6 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # past days by tariff zone, for the month views (fetched gently once; later only the day that just ended)
+    entry.async_create_background_task(hass, coordinator.backfill_days(), "felicity backfill")
     if coordinator.outlets_on:
         label_outlets(hass, coordinator.inverters, entry.options.get(CONF_OUTLET_LABEL, DEFAULT_OUTLET_LABEL))
     if entry.options.get("tariff_history"):  # a tariff was saved: keep the Energy dashboard in step

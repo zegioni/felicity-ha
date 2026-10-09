@@ -40,6 +40,14 @@ const DAY = (offset = 0) => {
   d.setDate(d.getDate() - offset);
   return `${d.getFullYear()}-${PAD(d.getMonth() + 1)}-${PAD(d.getDate())}`;
 };
+// calendar month `offset` months ago as YYYY-MM, and its name
+const MONTH = (offset = 0) => {
+  const d = new Date();
+  d.setDate(15);
+  d.setMonth(d.getMonth() - offset);
+  return `${d.getFullYear()}-${PAD(d.getMonth() + 1)}`;
+};
+const MONTH_NAME = (ym) => new Date(ym + "-15T12:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 const DAYS_AGO = (date) => Math.round((new Date(DAY(0) + "T12:00:00") - new Date(date + "T12:00:00")) / 864e5);
 const MINS = (s) => { const [h, m] = String(s).split(":").map(Number); return h * 60 + (m || 0); };
 const ISO_DAY = (d) => String(((d.getDay() + 6) % 7) + 1);  // 1 = Monday … 7 = Sunday
@@ -150,7 +158,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const ZONE_COLORS = ["#c08bff", "#3ddc84", "#2ec4b6", "#ff7eb6"];
 
 // UI state survives Home Assistant re-creating the card element (it does so after load / on resource reload)
-const UI = { day: 0, unit: "day", stab: null, sn: null, view: "overview", preset: null, custom: null,
+const UI = { day: 0, unit: "day", stab: null, sn: null, view: "overview", preset: null, custom: null, period: "today", cmode: "day", cmonth: 0,
   tdraft: null, tbase: null, tdraftSn: null, terr: "", tsaving: false };
 
 const STYLES = `<style>
@@ -208,6 +216,11 @@ const STYLES = `<style>
   .tp-h button,.lnk{font-size:12px;font-weight:600;color:#ffb547}
   .tp-now{display:flex;align-items:center;gap:8px;font-size:15px}.tp-now strong{margin-left:auto;font-size:22px;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
   .tp-next,.tp-t{font-size:12px;opacity:.75}.tp-t{margin-top:4px}
+  .pp{margin:4px 0 2px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.pp button{font-size:11.5px;padding:4px 2px;white-space:nowrap}
+  .sv{margin-top:8px;padding-top:6px;border-top:1px solid #ffffff14}.sv-t{font-size:13.5px;margin-top:4px}.sv-t span{opacity:1!important;font-weight:600}
+  .dtab{margin-top:10px;font-size:12px;font-variant-numeric:tabular-nums;overflow-x:auto}
+  .dt{display:grid;grid-template-columns:minmax(44px,1fr) repeat(var(--n),minmax(34px,auto)) minmax(48px,auto) minmax(48px,auto);gap:4px 8px;padding:3px 0;border-bottom:1px solid #ffffff0c;align-items:center}
+  .dt span:not(:first-child){text-align:right}.dt:first-child{opacity:.7;font-size:11px}
   .tp-s{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-top:2px}.tp-s span{opacity:.75}.tp-s b{white-space:nowrap}
   .tp-hint{font-size:11px;opacity:.6;line-height:1.4}
   code{font-size:11px;background:#ffffff12;border-radius:5px;padding:1px 5px;word-break:break-all}
@@ -471,6 +484,15 @@ class FelicityFlowCard extends HTMLElement {
     return !h ? null : h.data && h.data.tariff ? h.data : { error: h.error || "no data" };
   }
 
+  // a calendar month by tariff zone (kept days + today): null while loading, {error} when it failed
+  _per(month) {
+    if (!this._sn) return null;
+    const key = `p:${this._sn}:${month}`;
+    this._get(key, `felicity/period?sn=${this._sn}&month=${month}`, month === MONTH(0) ? 60000 : 600000);
+    const h = this._hist[key];
+    return !h ? null : h.data && h.data.month ? h.data : { error: h.error || "no data" };
+  }
+
   _staleTariff() { for (const [k, h] of Object.entries(this._hist)) if (k.startsWith("t:")) h.at = 0; }
 
   // kWh from W samples (~1/min); gaps over 10 min are not bridged
@@ -709,8 +731,10 @@ class FelicityFlowCard extends HTMLElement {
     const date = DAY(UI.day), h = this._dayHist(date), nav = this._dayNav();
     if (!h || !h.rows.length) return nav + this._empty(h);
     const r = h.rows, k = (i, sign) => this._kwh(r, i, sign).toFixed(1);
-    const e = { pv: k(COL.pv, 1), pv1: k(COL.pv1, 1), pv2: k(COL.pv2, 1), bought: k(COL.grid, 1), charged: k(COL.bat, 1), used: k(COL.bat, -1), home: k(COL.home, 1) };
     const T = this._tar(date), ok = T && !T.error, zs = ok ? this._zones(T) : {};
+    // grid import from the inverter's own counter when known (the zone split and the bill use it), else from power
+    const bought = ok && !T.day.error ? (+T.day.grid_kwh).toFixed(1) : k(COL.grid, 1);
+    const e = { pv: k(COL.pv, 1), pv1: k(COL.pv1, 1), pv2: k(COL.pv2, 1), bought, charged: k(COL.bat, 1), used: k(COL.bat, -1), home: k(COL.home, 1) };
     const zoneBands = ok ? T.bands.map(([from, to, id]) => ({ from, to, col: (zs[id] || {}).color || "#888", op: 0.13 })) : [];
     const cost = ok && !T.day.error ? `<i>· <b>${MONEY(T.day.grid_cost, T.tariff.currency)}</b></i>` : "";
     const totals = (items) => `<span class="tot">${items.map(([n, x, c]) => `<i style="color:${c}">${n} <b>${x}</b></i>`).join("")}<i>kWh</i></span>`;
@@ -1065,18 +1089,57 @@ class FelicityFlowCard extends HTMLElement {
     return `<div class="tp-s"><span>${label} <small>vs. buying everything from the grid</small></span><b class="${d.saved < 0 ? "neg" : "pos"}">${MONEY(d.saved, cur)}</b></div>`;
   }
 
+  // where the money went over whole days: the home's use at zone prices, what was paid, and the battery's part
+  _savings(d, cur, title = "") {
+    if (!d || !(d.home_kwh > MIN_KWH)) return "";
+    const b = d.battery || {}, row = (l, v, cls = "") => `<div class="tp-s"><span>${l}</span><b class="${cls}">${v}</b></div>`;
+    return `<div class="sv">${title ? `<div class="tp-t">${title}</div>` : ""}
+      ${row("Your home's use at zone prices", MONEY(d.home_cost, cur))}
+      ${row("Paid for the grid", MONEY(d.grid_cost, cur))}
+      ${d.export_earned > 0 ? row("Earned selling", MONEY(d.export_earned, cur), "pos") : ""}
+      <div class="tp-s sv-t"><span>Saved</span><b class="${d.saved < 0 ? "neg" : "pos"}">${MONEY(d.saved, cur)}</b></div>
+      ${b.in_kwh > MIN_KWH || b.out_kwh > MIN_KWH ? `<div class="tp-hint">Battery: charged ${(+b.in_kwh).toFixed(1)} kWh for ${MONEY(b.in_cost, cur)},
+        gave back ${(+b.out_kwh).toFixed(1)} kWh worth ${MONEY(b.out_value, cur)}.</div>` : ""}</div>`;
+  }
+
+  // today / yesterday / this month / last month: grid import by zone and, over whole days, the savings
+  _period(T, cur) {
+    const P = UI.period, pills = `<div class="tabs pp">${[["today", "Today"], ["yesterday", "Yesterday"], ["month", "This month"], ["lastmonth", "Last month"]]
+      .map(([k, t]) => `<button data-period="${k}" class="${k === P ? "on" : ""}">${t}</button>`).join("")}</div>`;
+    if (P === "today") {
+      const Y = this._tar(DAY(1)), yd = Y && !Y.error && !Y.day.error ? Y.day : null;
+      return pills + this._zoneTable(T, T.day) + (yd && yd.home_kwh > MIN_KWH ? this._savedRow(yd, cur, "Saved yesterday") : "")
+        + (T.day.export_kwh > MIN_KWH ? `<div class="tp-s"><span>Sold to grid ${(+T.day.export_kwh).toFixed(1)} kWh</span><b class="pos">${MONEY(T.day.export_earned, cur)}</b></div>` : "");
+    }
+    if (P === "yesterday") {
+      const Y = this._tar(DAY(1));
+      if (!Y || Y.error || Y.day.error) return pills + this._empty(Y && (Y.error ? Y : { error: Y.day.error }), "");
+      return pills + this._zoneTable(Y, Y.day) + this._savings(Y.day, cur);
+    }
+    const M = this._per(MONTH(P === "month" ? 0 : 1));
+    return pills + this._monthBody(T, M, cur);
+  }
+
+  _monthBody(T, M, cur) {
+    if (!M || M.error) return this._empty(M, "");
+    const pending = M.missing.length && M.backfilling ? `still fetching ${M.missing.length} earlier day${M.missing.length > 1 ? "s" : ""}…` : "";
+    if (!M.days) return `<div class="tp-hint">${pending || "No data for this month."}</div>`;
+    const cur_month = M.month === MONTH(0), fin = M.sav.days;
+    const savTitle = cur_month ? `Savings over ${fin} finished day${fin === 1 ? "" : "s"}` : "";
+    const unpriced = M.unpriced ? ` ${M.unpriced} day${M.unpriced > 1 ? "s have" : " has"} no recorded price, so ${M.unpriced > 1 ? "their" : "its"} cost is missing.` : "";
+    return this._zoneTable(T, M) + this._savings(M.sav, cur, savTitle)
+      + `<div class="tp-hint">${M.days} day${M.days > 1 ? "s" : ""}${cur_month ? " so far, today included" : ""}; prices are the month's average per zone.${unpriced}${pending ? " " + pending : ""}</div>`;
+  }
+
   _tariffPanel(T, tabbed) {
     if (!T || T.error) return `<div class="tp">${this._empty(T, "")}</div>`;
-    const cur = T.tariff.currency, n = T.now, z = n.zone, d = T.day;
+    const cur = T.tariff.currency, n = T.now, z = n.zone;
     const next = n.next_zone ? `<div class="tp-next">${ESC(n.next_zone.name)} from <b>${CLOCK(n.next_at)}</b> · ${PRICE(n.next_zone.price, cur)} · in ${DUR(Math.max(0, (new Date(n.next_at) - Date.now()) / 36e5))}</div>` : "";
-    const Y = this._tar(DAY(1)), yd = Y && !Y.error && !Y.day.error ? Y.day : null;
     return `<div class="tp">
       <div class="tp-h"><span>Electricity price now</span>${tabbed ? `<button data-view="tariff">Tariff ›</button>` : ""}</div>
       <div class="tp-now">${z ? `<span class="zd big" style="--z:${z.color}"></span><b>${ESC(z.name)}</b>` : "<b>Dynamic price</b>"}<strong>${PRICE(n.price, cur)}</strong></div>${next}
       ${T.bands.length ? this._strip(T.bands, this._zones(T)) + this._ticks() : ""}
-      <div class="tp-t">Bought from the grid today</div>${this._zoneTable(T, d)}
-      ${yd && yd.home_kwh > MIN_KWH ? this._savedRow(yd, cur, "Saved yesterday") : ""}
-      ${d.export_kwh > MIN_KWH ? `<div class="tp-s"><span>Sold to grid ${(+d.export_kwh).toFixed(1)} kWh</span><b class="pos">${MONEY(d.export_earned, cur)}</b></div>` : ""}</div>`;
+      <div class="tp-t">Bought from the grid</div>${this._period(T, cur)}</div>`;
   }
 
   // the editor works on a copy (UI.tdraft) until Save; an untouched copy follows the saved tariff
@@ -1172,16 +1235,34 @@ class FelicityFlowCard extends HTMLElement {
   }
 
   _costByDay(T) {
+    const modes = `<div class="tabs">${[["day", "Day"], ["month", "Month"]].map(([k, t]) => `<button data-cmode="${k}" class="${k === UI.cmode ? "on" : ""}">${t}</button>`).join("")}</div>`;
+    if (UI.cmode === "month") return `<div class="hist"><div class="sec">Cost by month</div>${modes}${this._costByMonth(T)}</div>`;
     const date = DAY(UI.day), D = UI.day === 0 ? T : this._tar(date);
-    if (!D || D.error) return `<div class="hist"><div class="sec">Cost by day</div>${this._dayNav()}${this._empty(D, "")}</div>`;
+    if (!D || D.error) return `<div class="hist"><div class="sec">Cost by day</div>${modes}${this._dayNav()}${this._empty(D, "")}</div>`;
     const dt = D.day_tariff || {}, since = dt.from ? dt.from.slice(0, 10) : null;
     const note = UI.day === 0 ? "" : !since ? "Priced with the first known tariff."
       : since > date ? `Priced with the earliest saved tariff (from ${since}); nothing older is known.`
       : `Priced with the tariff valid from ${since}${dt.changed ? " (it changed during this day: each part is priced with its own tariff)" : ""}.`;
-    return `<div class="hist"><div class="sec">Cost by day</div>${this._dayNav()}
+    return `<div class="hist"><div class="sec">Cost by day</div>${modes}${this._dayNav()}
       ${D.bands.length ? this._strip(D.bands, this._zones(D), UI.day === 0) + this._ticks() : ""}${this._zoneTable(D, D.day)}
       ${UI.day > 0 && !D.day.error && D.day.home_kwh > MIN_KWH ? this._savedRow(D.day, T.tariff.currency, "Saved that day") : ""}
       ${note ? `<div class="tp-hint">${note}</div>` : ""}</div>`;
+  }
+
+  // a calendar month: zones, savings and each day, to check against the bill
+  _costByMonth(T) {
+    const ym = MONTH(UI.cmonth), M = this._per(ym), cur = T.tariff.currency;
+    const nav = `<div class="nav"><button data-cmonth="1" aria-label="Previous month">‹</button>
+      <div class="datebtn"><b>${MONTH_NAME(ym)}</b><small>${UI.cmonth === 0 ? "this month" : UI.cmonth === 1 ? "last month" : `${UI.cmonth} months ago`}</small></div>
+      <button data-cmonth="-1" ${UI.cmonth === 0 ? "disabled" : ""} aria-label="Next month">›</button></div>`;
+    if (!M || M.error || !M.days) return nav + this._monthBody(T, M, cur);
+    const zones = M.zones.filter((z) => z.grid_kwh > MIN_KWH || M.zones.length === 1);
+    const head = `<div class="dt"><span>Day</span>${zones.map((z) => `<span><i class="zd" style="--z:${z.color}"></i>${ESC(z.name)}</span>`).join("")}<span>Paid, ${CUR[cur] || cur}</span><span>Saved, ${CUR[cur] || cur}</span></div>`;
+    const rows = M.per_day.slice().reverse().map((d) => `<div class="dt"><span>${new Date(d.date + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+      ${zones.map((z) => `<span>${(+(d.zones[z.id] || 0)).toFixed(1)}</span>`).join("")}<span>${(+d.grid_cost).toFixed(2)}</span>
+      <span class="${d.saved < 0 ? "neg" : "pos"}">${(+d.saved).toFixed(2)}</span></div>`).join("");
+    return nav + this._monthBody(T, M, cur)
+      + `<div class="dtab" style="--n:${zones.length}">${head}${rows}</div><div class="tp-hint">kWh by zone for each finished day${ym === MONTH(0) ? "; today is only in the totals above" : ""}.</div>`;
   }
 
   _energyHelp(T) {
@@ -1311,6 +1392,9 @@ class FelicityFlowCard extends HTMLElement {
     });
     on("[data-stab]", "click", (b) => { UI.stab = b.dataset.stab; this._redraw(); });
     on("[data-unit]", "click", (b) => { UI.unit = b.dataset.unit; this._hover = null; this._redraw(); });
+    on("[data-period]", "click", (b) => { UI.period = b.dataset.period; this._redraw(); });
+    on("[data-cmode]", "click", (b) => { UI.cmode = b.dataset.cmode; this._redraw(); });
+    on("[data-cmonth]", "click", (b) => { UI.cmonth = Math.max(0, UI.cmonth + Number(b.dataset.cmonth)); this._redraw(); });
     this._bindSettings(on);
     this._bindTariff(on, once);
     this._bindCharts(once);

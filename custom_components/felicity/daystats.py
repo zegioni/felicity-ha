@@ -17,6 +17,7 @@ from .tariff import DYNAMIC_ZONE, Pricer
 GAP = timedelta(minutes=10)      # power integration does not bridge longer gaps in history
 RUNTIME_WINDOW = timedelta(minutes=30)
 RESET = 1.0                      # a day counter falling by more than this (kWh) has restarted
+CHARGE_LOSS = 1.25               # at most this much grid energy is paid per kWh charged (the inverter's losses)
 
 
 def num(r: dict, k: str) -> float:
@@ -31,14 +32,18 @@ def has(rows: list[dict], key: str) -> bool:
 
 
 def counter_steps(rows: list[dict], key: str) -> list[float]:
-    """Increase of a day counter at each row. Small dips are noise (ignored until the counter passes them again);
-    a large drop is a restart, counted from its new value."""
+    """Increase of a day counter at each row. Small dips are noise (ignored until the counter passes them again), a
+    lone 0 after the counter has grown is a dropped reading, and any other large drop is a restart, counted from its
+    new value."""
     last, out = 0.0, []
     for r in rows:
         if r.get(key) in (None, ""):
             out.append(0.0)
             continue
         v = num(r, key)
+        if v == 0 and last > RESET:  # a dropped reading (the cloud sometimes sends 0 between real values)
+            out.append(0.0)
+            continue
         if v < last - RESET:
             last = 0.0
         out.append(max(v - last, 0.0))
@@ -84,23 +89,32 @@ def zone_split(rows: list[dict], pricer: Pricer, zones: list[dict], export_price
     def entry(z: dict) -> dict:
         if z["id"] not in acc:
             acc[z["id"]] = {"id": z["id"], "name": z["name"], "color": z["color"], "price": z.get("price"),
-                            "grid_kwh": 0.0, "grid_cost": 0.0, "home_kwh": 0.0, "home_cost": 0.0, "export_kwh": 0.0}
+                            "grid_kwh": 0.0, "grid_cost": 0.0, "home_kwh": 0.0, "home_cost": 0.0, "export_kwh": 0.0,
+                            # battery: charged (its grid-bought part priced) and discharged (valued at the zone price)
+                            "bat_in_kwh": 0.0, "bat_in_cost": 0.0, "bat_out_kwh": 0.0, "bat_out_cost": 0.0}
         return acc[z["id"]]
 
-    def book(when: datetime, what: str, kwh: float) -> None:
+    def book(when: datetime, what: str, kwh: float, priced: float | None = None) -> None:
+        """priced: the part of kwh that is paid for (default all of it)."""
         z, price = pricer.at(when)
         if z is None or not kwh:
             return
         e = entry(z)
         e[f"{what}_kwh"] += kwh
         if what != "export" and price is not None:  # an unknown price still counts the energy
-            e[f"{what}_cost"] += kwh * price
+            e[f"{what}_cost"] += (kwh if priced is None else priced) * price
 
     for z in zones or [DYNAMIC_ZONE]:
         entry(z)
     steps = counter_steps(rows, "eGridInToday") if has(rows, "eGridInToday") else None
+    # the inverter's power readings run a few % high against its own counter: home and battery energy are scaled by
+    # the day's counter/power ratio, so that with no battery and no solar the home's use equals what was bought (and
+    # the counter, in 0.1 kWh steps, is too coarse to tell which minute's import went where)
+    power_total = sum(max(num(r, "acTtlInpower"), 0) * h for r, h, _ in _intervals(rows))
+    scale = sum(steps) / power_total if steps is not None and power_total > 0.1 else 1.0
     for i, (r, h, dt) in enumerate(_intervals(rows)):
         when, grid = r["_local"], num(r, "acTtlInpower")
+        bought = max(grid, 0) * h * scale  # this interval's grid import (kWh)
         if steps is None:
             book(when, "grid", max(grid, 0) * h)
         elif steps[i] and dt is not None and dt > GAP:
@@ -109,8 +123,14 @@ def zone_split(rows: list[dict], pricer: Pricer, zones: list[dict], export_price
                 book(when - dt + timedelta(minutes=k), "grid", steps[i] / n)
         else:
             book(when, "grid", steps[i])
-        book(when, "home", max(num(r, "acTotalOutActPower") + num(r, "meterPower"), 0) * h)
+        home = max(num(r, "acTotalOutActPower") + num(r, "meterPower"), 0) * h * scale
+        book(when, "home", home)
         book(when, "export", max(-grid, 0) * h)
+        bat = num(r, "emsPower")  # + charging, - discharging
+        charge = max(bat, 0) * h * scale
+        # paid for charging: what was bought beyond the home's use, so the inverter's losses count (capped); solar is free
+        book(when, "bat_in", charge, priced=min(max(bought - home, 0), charge * CHARGE_LOSS))
+        book(when, "bat_out", max(-bat, 0) * h * scale)
 
     out = []
     for z in acc.values():
@@ -120,11 +140,17 @@ def zone_split(rows: list[dict], pricer: Pricer, zones: list[dict], export_price
     grid_cost, home_cost = sum(z["grid_cost"] for z in out), sum(z["home_cost"] for z in out)
     export_kwh = sum(z["export_kwh"] for z in out)
     earned = export_kwh * export_price
+    bat_in_cost, bat_out_value = sum(z["bat_in_cost"] for z in out), sum(z["bat_out_cost"] for z in out)
     return {"zones": out, "grid_kwh": round(sum(z["grid_kwh"] for z in out), 3), "grid_cost": round(grid_cost, 2),
             "home_kwh": round(sum(z["home_kwh"] for z in out), 3), "home_cost": round(home_cost, 2),
             "export_kwh": round(export_kwh, 3), "export_earned": round(earned, 2),
             # what the home's use would have cost bought straight from the grid, minus what was actually paid
-            "saved": round(home_cost - grid_cost + earned, 2), "currency": currency}
+            "saved": round(home_cost - grid_cost + earned, 2),
+            # the battery: what its discharge would have cost from the grid, minus what charging it from the grid cost
+            "battery": {"in_kwh": round(sum(z["bat_in_kwh"] for z in out), 3), "in_cost": round(bat_in_cost, 2),
+                        "out_kwh": round(sum(z["bat_out_kwh"] for z in out), 3), "out_value": round(bat_out_value, 2),
+                        "saved": round(bat_out_value - bat_in_cost, 2)},
+            "currency": currency}
 
 
 def battery_runtime(rows: list[dict], soc: float | None, reserve: float, capacity_kwh: float,
@@ -145,3 +171,28 @@ def battery_runtime(rows: list[dict], soc: float | None, reserve: float, capacit
     if avg_w and avg_w > 30:
         out["hours"] = round(left * 1000 / avg_w, 2)
     return out
+
+
+def add_up(days: list[dict]) -> dict:
+    """Sum day splits (zone_split results) into one period: each zone's kWh and money, the totals and the battery.
+    A zone's price is the period's average (it may have changed during the period)."""
+    zones: dict[str, dict] = {}
+    t = dict.fromkeys(("grid_kwh", "grid_cost", "home_kwh", "home_cost", "export_kwh", "export_earned", "saved"), 0.0)
+    bat = dict.fromkeys(("in_kwh", "in_cost", "out_kwh", "out_value", "saved"), 0.0)
+    for d in days:
+        for k in t:
+            t[k] += d.get(k) or 0.0
+        for k in bat:
+            bat[k] += (d.get("battery") or {}).get(k) or 0.0
+        for z in d.get("zones") or []:
+            e = zones.setdefault(z["id"], {"id": z["id"], **dict.fromkeys(
+                ("grid_kwh", "grid_cost", "home_kwh", "home_cost", "bat_in_kwh", "bat_in_cost", "bat_out_kwh", "bat_out_cost"), 0.0)})
+            e.update(name=z["name"], color=z["color"])
+            for k in list(e):
+                if k.endswith(("_kwh", "_cost")):
+                    e[k] += z.get(k) or 0.0
+    for z in zones.values():
+        z["price"] = round(z["grid_cost"] / z["grid_kwh"], 4) if z["grid_kwh"] > 0.01 else None
+    places = lambda k: 3 if k.endswith("kwh") else 4 if k == "price" else 2  # noqa: E731
+    rnd = lambda d: {k: (round(v, places(k)) if isinstance(v, float) else v) for k, v in d.items()}  # noqa: E731
+    return {**rnd(t), "zones": [rnd(z) for z in zones.values()], "battery": rnd(bat), "days": len(days)}
