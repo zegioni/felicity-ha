@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import history_time
 from .const import DOMAIN
-from .coordinator import FelicityCoordinator, event_row
+from .coordinator import FelicityCoordinator
 from .cost import cost_entities
 from .settings import ECO_RULES, SKIP, display, eco_rule_summary, is_risky, name_of, placement, spec, unit_of
 
@@ -110,6 +110,10 @@ SENSORS = (
         ("offGridEnergy", "Backup load energy today"), ("gridTiedEnergy", "Home load energy today"))),
 )
 
+# keys whose meaning is only known for one model family: "tempMin" is the battery minimum in the API documentation,
+# but on IVAM it is the "Internal temperature" above
+MODEL_ONLY = {"tempMin": "IVAM"}
+
 # Battery pack (device list entry with bp*Version instead of masterVersion).
 BATTERY_SENSORS = (
     _s("live", "battSoc", "SOC", SensorDeviceClass.BATTERY, PERCENTAGE),
@@ -138,13 +142,15 @@ async def async_setup_entry(hass, entry, async_add_entities):
     def reported(v: dict, d: FelicitySensorDescription) -> bool:
         # only what the device actually reports (an empty record, e.g. offline at start-up, creates everything)
         rec = v.get(d.source) or {}
+        if d.key in MODEL_ONLY and not str(v["device"].get("deviceModel") or "").upper().startswith(MODEL_ONLY[d.key]):
+            return False
         return not rec or rec.get(d.key) not in (None, "")
     entities: list[SensorEntity] = [FelicitySensor(coordinator, sn, d) for sn, v in coordinator.data.items()
                                     for d in (BATTERY_SENSORS if _is_battery(v["device"]) else SENSORS) if reported(v, d)]
     for sn in coordinator.inverters:
         entities += [FelicitySettingSensor(coordinator, sn, k) for k, x in (coordinator.settings.get(sn) or {}).items()
                      if k not in SKIP and (x or k not in ECO_RULES)]
-    entities += [FelicityEventSensor(coordinator, sn) for sn in coordinator.data]
+    entities += [FelicityEventSensor(coordinator, sn) for sn in coordinator.inverters]
     async_add_entities(entities + coordinator.outlet_sensors + cost_entities(hass, entry, coordinator))
 
 
@@ -203,17 +209,15 @@ class FelicityEventSensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
     @property
     def native_value(self):
         e = self._events
-        return (e[0].get("warringName") or f"Code {e[0].get('warnCode')}")[:255] if e else "No events"
+        return (e[0]["name"] or f"Code {e[0]['code']}")[:255] if e else "No events"
 
     @property
     def extra_state_attributes(self):
-        short = lambda x: event_row(x, self.coordinator.data[self._sn]["device"].get("deviceModel"))
         e = self._events
-        attrs = {"sn": self._sn, "field": "events.last", "events_7d": len(e), "faults_7d": sum(1 for x in e if x.get("warringType") == "F"),
-                 "events": [short(x) for x in e[:20]]}
+        attrs = {"sn": self._sn, "field": "events.last", "events_7d": len(e),
+                 "faults_7d": sum(1 for x in e if x["type"] == "fault"), "events": e[:20]}
         if e:
-            attrs.update({k: v for k, v in short(e[0]).items() if k not in ("name", "label")})
-            attrs["time_zone"] = e[0].get("timeZone")
+            attrs.update({k: v for k, v in e[0].items() if k not in ("name", "label")})
         return attrs
 
 

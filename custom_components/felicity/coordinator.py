@@ -44,8 +44,8 @@ def event_row(e: dict, model: str | None = None) -> dict:
             **explain(model, kind, e.get("warnCode"))}
 
 
-def _event_key(e: dict) -> tuple:
-    return e.get("warnCode"), e.get("warringType"), e.get("dataTimeStr")
+def _event_key(row: dict) -> tuple:
+    return row["code"], row["type"], row["time"]
 
 
 def today() -> str:
@@ -82,7 +82,9 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self.meters: dict[str, dict] = {}          # sn -> today's kWh for the Energy dashboard
         self._energy: dict[str, dict] = {}
         self.events: dict[str, list] = {}          # sn -> alarms and faults of the last 7 days, newest first
+        self._event_seen: dict[str, set] = {}      # sn -> keys of the events already announced (last 8 days)
         self._event_months: dict[tuple, tuple] = {}  # (sn, YYYY-MM) -> (final, fetched at, rows)
+        self._event_months_lock = asyncio.Lock()
         self._live_kw: dict[str, bool] = {}        # sn -> the live record's powers come in kW (kept once seen)
         self._history: OrderedDict[str, tuple[float, bool, list]] = OrderedDict()
         self._recent: dict[str, list] = {}         # sn -> today's rows, for the battery runtime
@@ -129,10 +131,13 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                         self._energy[sn] = await self.client.energy_today(sn, today())
                     except FelicityApiError as err:
                         _LOGGER.debug("energy for %s: %s", sn, err)
-            if self._due("events", EVENTS_INTERVAL_SECONDS):
-                for sn in sns:
+            # not in the first refresh: it would hold up the set-up (the first poll after it only takes stock)
+            if self.data is not None and self._due("events", EVENTS_INTERVAL_SECONDS):
+                for sn in self.inverters:
                     try:
-                        self._new_events(sn, await self.client.events(sn))
+                        self._new_events(sn, [event_row(e, self._model(sn)) for e in await self.client.events(sn)])
+                    except FelicityAuthError:
+                        raise
                     except FelicityApiError as err:
                         _LOGGER.debug("events for %s: %s", sn, err)
             if self._due("settings", SETTINGS_INTERVAL_SECONDS):
@@ -153,20 +158,31 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                                 "events": self.events.get(d["deviceSn"], [])}
                 for d in self.devices}
 
-    def _new_events(self, sn: str, events: list[dict]) -> None:
-        """Keep the events and fire EVENT_TYPE for each one not seen before (not for those found at start-up)."""
-        if sn in self.events:
-            seen = {_event_key(e) for e in self.events[sn]}
-            for e in reversed(events):  # oldest first
-                if _event_key(e) not in seen:
-                    self.hass.bus.async_fire(EVENT_TYPE, {
-                        "sn": sn, "code": e.get("warnCode"), "name": e.get("warringName"),
-                        "type": "fault" if e.get("warringType") == "F" else "alarm", "time": e.get("dataTimeStr")})
-        self.events[sn] = events
+    def _model(self, sn: str) -> str | None:
+        return next((d.get("deviceModel") for d in self.devices if d["deviceSn"] == sn), None)
+
+    def _new_events(self, sn: str, rows: list[dict]) -> None:
+        """Keep the events and fire EVENT_TYPE once for each new one. Those found by the first poll are only taken
+        stock of; announced keys are remembered for 8 days, so a reply that briefly comes back empty does not
+        announce the whole week again."""
+        first = sn not in self._event_seen
+        seen = self._event_seen.setdefault(sn, set())
+        for row in reversed(rows):  # oldest first
+            if (key := _event_key(row)) not in seen:
+                seen.add(key)
+                if not first:
+                    self.hass.bus.async_fire(EVENT_TYPE, {"sn": sn, **row})
+        cutoff = (dt_util.now() - timedelta(days=8)).strftime("%Y-%m-%d")
+        self._event_seen[sn] = {k for k in seen if (k[2] or "") >= cutoff}
+        self.events[sn] = rows
 
     async def events_month(self, sn: str, month: str) -> list[dict]:
         """Alarms and faults of a calendar month (YYYY-MM), newest first. The cloud answers at most 7 days per query;
-        a finished month is fetched once, the current one again after 10 minutes."""
+        a month is fetched once when it ended more than a day ago (late uploads), otherwise again after 10 minutes."""
+        async with self._event_months_lock:  # the panel and a widget may ask for the same month at once
+            return await self._events_month(sn, month)
+
+    async def _events_month(self, sn: str, month: str) -> list[dict]:
         hit = self._event_months.get((sn, month))
         if hit and (hit[0] or time.time() - hit[1] < EVENTS_INTERVAL_SECONDS):
             return hit[2]
@@ -177,10 +193,10 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             spans.append((d, min(d + timedelta(days=6), last)))
             d = spans[-1][1] + timedelta(days=1)
         parts = await asyncio.gather(*(self.client.events(sn, f"{a} 00:00:00", f"{b} 23:59:59") for a, b in spans))
-        rows = list({_event_key(e): e for p in parts for e in p}.values())
-        model = next((d.get("deviceModel") for d in self.devices if d["deviceSn"] == sn), None)
-        rows = [event_row(e, model) for e in sorted(rows, key=lambda e: e.get("dataTimeStr") or "", reverse=True)]
-        self._event_months[(sn, month)] = (month < today()[:7], time.time(), rows)
+        rows = list({_event_key(r): r for p in parts for r in (event_row(e, self._model(sn)) for e in p)}.values())
+        rows.sort(key=lambda r: r["time"] or "", reverse=True)
+        final = month < (dt_util.now() - timedelta(days=1)).strftime("%Y-%m")
+        self._event_months[(sn, month)] = (final, time.time(), rows)
         return rows
 
     # ---- settings ----

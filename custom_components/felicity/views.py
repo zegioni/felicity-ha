@@ -332,5 +332,7 @@ class EventsView(_View):
             month = request.query.get("month") or today()[:7]
             if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
                 raise BadRequest("month must be YYYY-MM")
+            if month > today()[:7]:
+                raise BadRequest("month is in the future")
             return {"sn": sn, "month": month, "events": await coordinator.events_month(sn, month)}
         return await self._run(answer())

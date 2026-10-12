@@ -11,7 +11,7 @@ from .const import DOMAIN, EVENT_TYPE
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities(FelicityAlarmEvent(sn) for sn in entry.runtime_data.data)
+    async_add_entities(FelicityAlarmEvent(sn) for sn in entry.runtime_data.inverters)
 
 
 class FelicityAlarmEvent(EventEntity):
@@ -30,6 +30,6 @@ class FelicityAlarmEvent(EventEntity):
         def fired(event) -> None:
             d = event.data
             if d.get("sn") == self._sn:
-                self._trigger_event(d["type"], {"code": d.get("code"), "name": d.get("name"), "time": d.get("time")})
+                self._trigger_event(d["type"], {k: v for k, v in d.items() if k not in ("sn", "type")})
                 self.async_write_ha_state()
         self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, fired))

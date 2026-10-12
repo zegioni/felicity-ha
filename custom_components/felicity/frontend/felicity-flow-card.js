@@ -239,7 +239,7 @@ const STYLES = `<style>
   /* sections */
   .hist{background:#ffffff0a;border-radius:16px;padding:10px 10px 8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden}
   .sec{font-size:15px;font-weight:600;margin:2px 2px 8px}
-  .sub{font-size:12px;opacity:.65;margin:10px 2px 6px}.sub:first-child{margin-top:0}
+  .sub{font-size:12px;opacity:.65;margin:10px 2px 6px}
   .evl{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
   .ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-radius:10px;background:#ffb5471a}
   .ev.fault{background:#ff5c5c1f}.evt{font-size:11px;font-weight:600;color:#ffd27a}.ev.fault .evt{color:#ff9a9a}
@@ -418,7 +418,8 @@ class FelicityFlowCard extends HTMLElement {
     this._v = v;
     let setStamp = "";
     for (const st of Object.values(this._set)) setStamp += st.last_updated;
-    const key = JSON.stringify(v) + UI.day + UI.sn + UI.view + (this._histStamp || "") + setStamp;
+    const ev = this._idx["events.last"];  // a new alarm changes nothing else
+    const key = JSON.stringify(v) + UI.day + UI.sn + UI.view + (this._histStamp || "") + setStamp + (ev ? ev.last_updated : "");
     if (key !== this._key) this._rerender(key);
   }
 
@@ -1335,10 +1336,11 @@ class FelicityFlowCard extends HTMLElement {
   _events() {
     const st = this._idx["events.last"], recent = (st && st.attributes.events) || [];
     const last7 = !st ? `<div class="ch-empty">Not available yet</div>`
-      : recent.length ? this._evRows(recent) : `<div class="okbox">No alarms or faults in the last 7 days</div>`;
+      : recent.length ? this._evRows(recent) + (st.attributes.events_7d > recent.length ? `<div class="xintro">The latest ${recent.length} of ${st.attributes.events_7d}; the month below lists them all</div>` : "")
+      : `<div class="okbox">No alarms or faults in the last 7 days</div>`;
     if (this._cfg.compact) return last7;
     const ym = MONTH(UI.emonth), key = `e:${this._sn}:${ym}`;
-    if (this._sn) this._get(key, `felicity/events?sn=${this._sn}&month=${ym}`, ym === MONTH(0) ? 600000 : 0);
+    if (this._sn) this._get(key, `felicity/events?sn=${this._sn}&month=${ym}`, UI.emonth <= 1 ? 600000 : 0);
     const h = this._hist[key], ev = h && h.data && h.data.events;
     const nav = `<div class="nav"><button data-emonth="1" aria-label="Previous month">‹</button>
       <div class="datebtn"><b>${MONTH_NAME(ym)}</b><small>${UI.emonth === 0 ? "this month" : UI.emonth === 1 ? "last month" : `${UI.emonth} months ago`}</small></div>
