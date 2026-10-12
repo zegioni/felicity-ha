@@ -108,7 +108,7 @@ const FIELDS = {
   grid_export_today: "energy.feedOutput", battery_charge_today: "energy.batCharEnergy", battery_discharge_today: "energy.batDisEnergy",
 };
 // tabs of the full card: [id, label, sections]
-const VIEWS = [["overview", "Overview", ["flow", "day", "all"]], ["charts", "Charts", ["explore"]], ["settings", "Settings", ["settings"]],
+const VIEWS = [["overview", "Overview", ["flow", "events", "day", "all"]], ["charts", "Charts", ["explore"]], ["settings", "Settings", ["settings"]],
   ["work", "Work mode", ["tou"]], ["tariff", "Tariff", ["tariff"]]];
 const SETTING_TABS = ["Mode settings", "Basic Setup", "Batt Setting", "Grid Setting", "Gen Setting", "Work Mode Setting",
   "Profession Setting", "Grid Code", "Parallel Setup"];
@@ -239,6 +239,10 @@ const STYLES = `<style>
   /* sections */
   .hist{background:#ffffff0a;border-radius:16px;padding:10px 10px 8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden}
   .sec{font-size:15px;font-weight:600;margin:2px 2px 8px}
+  .evl{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
+  .ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-radius:10px;background:#ffb5471a}
+  .ev.fault{background:#ff5c5c1f}.evt{font-size:11px;font-weight:600;color:#ffd27a}.ev.fault .evt{color:#ff9a9a}
+  .evn{min-width:0;overflow-wrap:anywhere}.evn small{opacity:.55;margin-left:6px}.evd{opacity:.7;white-space:nowrap;font-variant-numeric:tabular-nums}
   .xintro{font-size:12.5px;opacity:.8;margin:2px 2px 10px;line-height:1.45;max-width:760px}
   .ch-empty{font-size:12px;opacity:.6;padding:24px 0;text-align:center}
   .tipwarn{font-size:12px;background:#ffb5471a;color:#ffd27a;border-radius:10px;padding:7px 10px;margin:6px 0}
@@ -1320,6 +1324,17 @@ class FelicityFlowCard extends HTMLElement {
 
   // ---- render and events ----
 
+  // the inverter's alarms (W) and faults (F) of the last 7 days, as the cloud keeps them; newest first
+  _events() {
+    const st = this._idx["events.last"];
+    if (!st) return `<div class="ch-empty">Not available yet</div>`;
+    const ev = st.attributes.events || [];
+    if (!ev.length) return `<div class="okbox">No alarms or faults in the last 7 days</div>`;
+    return `<div class="evl">${ev.map((e) => `<div class="ev ${e.type}"><span class="evt">${e.type === "fault" ? "Fault" : "Alarm"}</span>
+      <span class="evn">${ESC(e.name || `Code ${e.code}`)}<small>code ${ESC(e.code)}</small></span><span class="evd">${ESC(e.time)}</span></div>`).join("")}</div>
+      ${st.attributes.events_7d > ev.length ? `<div class="xintro">Showing the latest ${ev.length} of ${st.attributes.events_7d}</div>` : ""}`;
+  }
+
   _header(tabbed) {
     const label = (sn) => `Inverter …${sn.slice(-4)}`;
     const picker = this._inverters.length > 1 && !this._cfg.sn
@@ -1337,6 +1352,7 @@ class FelicityFlowCard extends HTMLElement {
     const T = show.some((s) => ["flow", "price", "tariff"].includes(s)) ? this._tar(DAY(0)) : null;
     const section = (id, title, body) => `<div class="hist ${id}"><div class="sec">${title}</div>${body()}</div>`;
     const bottom = [
+      show.includes("events") && section("events", "Alarms and faults", () => this._events()),
       show.includes("day") && section("day", "Day details", () => this._dayCharts()),
       show.includes("all") && section("all", "History", () => this._allTime()),
       show.includes("explore") && section("explore", "Charts", () => this._explorer()),

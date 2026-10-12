@@ -27,7 +27,7 @@ from .views import views
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SWITCH]
+PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SWITCH, Platform.EVENT]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 PANEL_PATH = "felicity-solar"
 STATIC_URL = "/felicity_static"

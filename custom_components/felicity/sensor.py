@@ -211,7 +211,7 @@ class FelicityEventSensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
             return {"time": e.get("dataTimeStr"), "type": "fault" if e.get("warringType") == "F" else "alarm",
                     "code": e.get("warnCode"), "name": e.get("warringName")}
         e = self._events
-        attrs = {"sn": self._sn, "events_7d": len(e), "faults_7d": sum(1 for x in e if x.get("warringType") == "F"),
+        attrs = {"sn": self._sn, "field": "events.last", "events_7d": len(e), "faults_7d": sum(1 for x in e if x.get("warringType") == "F"),
                  "events": [short(x) for x in e[:20]]}
         if e:
             attrs.update({k: v for k, v in short(e[0]).items() if k != "name"})
