@@ -17,7 +17,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import FelicityApiError, FelicityAuthError, FelicityClient, history_time, powers_in_kw, scale_powers
-from .const import CONF_OUTLETS, DOMAIN, ENERGY_INTERVAL_SECONDS, SCAN_INTERVAL_SECONDS, SETTINGS_INTERVAL_SECONDS
+from .const import (CONF_OUTLETS, DOMAIN, ENERGY_INTERVAL_SECONDS, EVENT_TYPE, EVENTS_INTERVAL_SECONDS, SCAN_INTERVAL_SECONDS,
+                     SETTINGS_INTERVAL_SECONDS)
 from .daystats import add_up, battery_runtime, day_totals, hourly_load, zone_split
 from .settings import ECO_RULES, is_risky, validate, validate_rule
 from .tariff import Pricer, day_bands, versions, zone_at
@@ -68,6 +69,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self.costs: dict[str, dict] = {}           # sn -> today's split of grid import by tariff zone
         self.meters: dict[str, dict] = {}          # sn -> today's kWh for the Energy dashboard
         self._energy: dict[str, dict] = {}
+        self.events: dict[str, list] = {}          # sn -> alarms and faults of the last 7 days, newest first
         self._live_kw: dict[str, bool] = {}        # sn -> the live record's powers come in kW (kept once seen)
         self._history: OrderedDict[str, tuple[float, bool, list]] = OrderedDict()
         self._recent: dict[str, list] = {}         # sn -> today's rows, for the battery runtime
@@ -114,6 +116,12 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                         self._energy[sn] = await self.client.energy_today(sn, today())
                     except FelicityApiError as err:
                         _LOGGER.debug("energy for %s: %s", sn, err)
+            if self._due("events", EVENTS_INTERVAL_SECONDS):
+                for sn in sns:
+                    try:
+                        self._new_events(sn, await self.client.events(sn))
+                    except FelicityApiError as err:
+                        _LOGGER.debug("events for %s: %s", sn, err)
             if self._due("settings", SETTINGS_INTERVAL_SECONDS):
                 # setting entities are created from the first read: without it, retry the set-up instead
                 await self._refresh_settings(strict=self.data is None)
@@ -128,8 +136,21 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             self._costs_task = self.config_entry.async_create_background_task(
                 self.hass, self.refresh_costs(), "felicity costs")
         return {d["deviceSn"]: {"device": d, "settings": self.settings.get(d["deviceSn"], {}),
-                                "live": live.get(d["deviceSn"], {}), "energy": self._energy.get(d["deviceSn"], {})}
+                                "live": live.get(d["deviceSn"], {}), "energy": self._energy.get(d["deviceSn"], {}),
+                                "events": self.events.get(d["deviceSn"], [])}
                 for d in self.devices}
+
+    def _new_events(self, sn: str, events: list[dict]) -> None:
+        """Keep the events and fire EVENT_TYPE for each one not seen before (not for those found at start-up)."""
+        key = lambda e: (e.get("warnCode"), e.get("warringType"), e.get("dataTimeStr"))
+        if sn in self.events:
+            seen = {key(e) for e in self.events[sn]}
+            for e in reversed(events):  # oldest first
+                if key(e) not in seen:
+                    self.hass.bus.async_fire(EVENT_TYPE, {
+                        "sn": sn, "code": e.get("warnCode"), "name": e.get("warringName"),
+                        "type": "fault" if e.get("warringType") == "F" else "alarm", "time": e.get("dataTimeStr")})
+        self.events[sn] = events
 
     # ---- settings ----
 

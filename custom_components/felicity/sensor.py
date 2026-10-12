@@ -97,6 +97,9 @@ SENSORS = (
     _s("live", "devTempMax", "Inverter temperature", T, C),
     _s("live", "devTempMin", "Inverter min temperature", T, C),
     _s("live", "tempMax", "Battery temperature", T, C),
+    # documented as the battery pack's minimum, but on IVAM it reads above tempMax (35–45 °C vs ~30 °C):
+    # a second sensor inside the inverter, named neutrally
+    _s("live", "tempMin", "Internal temperature", T, C),
     _s("live", "workMode", "Work mode", sc=None),
     _s("live", "ebatCharTotal", "Battery charged total", E, KWH, TI),
     _s("live", "ebatDischarTotal", "Battery discharged total", E, KWH, TI),
@@ -141,6 +144,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     for sn in coordinator.inverters:
         entities += [FelicitySettingSensor(coordinator, sn, k) for k, x in (coordinator.settings.get(sn) or {}).items()
                      if k not in SKIP and (x or k not in ECO_RULES)]
+    entities += [FelicityEventSensor(coordinator, sn) for sn in coordinator.data]
     async_add_entities(entities + coordinator.outlet_sensors + cost_entities(hass, entry, coordinator))
 
 
@@ -176,6 +180,43 @@ class FelicitySensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
             return float(v)
         except (TypeError, ValueError):
             return None
+
+
+class FelicityEventSensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
+    """The latest alarm or fault of the last 7 days ("No events" when there is none); all of them in the attributes.
+    New ones are also fired as felicity_event on the bus, for automations."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Last event"
+    _attr_icon = "mdi:alert-circle-outline"
+
+    def __init__(self, coordinator: FelicityCoordinator, sn: str) -> None:
+        super().__init__(coordinator)
+        self._sn = sn
+        self._attr_unique_id = f"{sn}_last_event"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, sn)})
+
+    @property
+    def _events(self) -> list[dict]:
+        return self.coordinator.data[self._sn].get("events") or []
+
+    @property
+    def native_value(self):
+        e = self._events
+        return (e[0].get("warringName") or f"Code {e[0].get('warnCode')}")[:255] if e else "No events"
+
+    @property
+    def extra_state_attributes(self):
+        def short(e):
+            return {"time": e.get("dataTimeStr"), "type": "fault" if e.get("warringType") == "F" else "alarm",
+                    "code": e.get("warnCode"), "name": e.get("warringName")}
+        e = self._events
+        attrs = {"sn": self._sn, "events_7d": len(e), "faults_7d": sum(1 for x in e if x.get("warringType") == "F"),
+                 "events": [short(x) for x in e[:20]]}
+        if e:
+            attrs.update({k: v for k, v in short(e[0]).items() if k != "name"})
+            attrs["time_zone"] = e[0].get("timeZone")
+        return attrs
 
 
 class FelicitySettingSensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):

@@ -178,6 +178,7 @@ All of them find their data by themselves; no entity configuration is needed.
 | Entity | Use it for |
 |---|---|
 | **Inverter and battery sensors** | Live values: solar, grid, battery, home, voltages, temperatures; plus the cloud's daily energy |
+| **Alarms and faults** | `Last event` sensor per device with the last 7 days of alarms and faults in its attributes (checked every 10 minutes); each new one is also fired as a `felicity_event` event (`sn`, `code`, `name`, `type`: alarm / fault, `time`) for your automations |
 | `sensor.electricity_tariff_current_price` | *Energy → Use an entity with current price*, automations |
 | `sensor.electricity_tariff_zone` | Automations ("run the boiler at night") |
 | `…_grid_import_today_<zone>` | Grid import per tariff zone (Energy dashboard) |

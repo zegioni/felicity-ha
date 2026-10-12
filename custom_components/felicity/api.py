@@ -174,6 +174,11 @@ class FelicityClient:
         out.sort(key=lambda r: r.get("deviceDataTime") or "")
         return out
 
+    async def events(self, sn: str) -> list[dict]:
+        """Alarms (warringType W) and faults (F) of the last 7 days, as the cloud keeps them; newest first."""
+        d = await self._request("GET", f"/openApi/data/deviceDataWarn/{sn}") or []
+        return sorted(d, key=lambda e: e.get("dataTimeStr") or "", reverse=True)
+
     async def energy(self, sn: str, dimension: str, date: str) -> list[dict]:
         """deviceDataEnergy records; dimension: day | month | year | total, date: 'YYYY-MM-DD HH:MM:SS'."""
         out: list[dict] = []
