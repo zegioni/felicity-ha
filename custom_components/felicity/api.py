@@ -174,9 +174,11 @@ class FelicityClient:
         out.sort(key=lambda r: r.get("deviceDataTime") or "")
         return out
 
-    async def events(self, sn: str) -> list[dict]:
-        """Alarms (warringType W) and faults (F) of the last 7 days, as the cloud keeps them; newest first."""
-        d = await self._request("GET", f"/openApi/data/deviceDataWarn/{sn}") or []
+    async def events(self, sn: str, start: str | None = None, end: str | None = None) -> list[dict]:
+        """Alarms (warringType W) and faults (F), newest first: of the last 7 days, or between start and end
+        ('YYYY-MM-DD HH:MM:SS', at most 7 days apart)."""
+        params = {"startTime": start, "endTime": end} if start and end else None
+        d = await self._request("GET", f"/openApi/data/deviceDataWarn/{sn}", params=params) or []
         return sorted(d, key=lambda e: e.get("dataTimeStr") or "", reverse=True)
 
     async def energy(self, sn: str, dimension: str, date: str) -> list[dict]:

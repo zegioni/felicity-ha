@@ -7,7 +7,7 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -34,6 +34,16 @@ BACKFILL_EMPTY_STOP = 31             # past days without data in a row: the star
 BACKFILL_MAX_DAYS = 92               # about three months back
 BACKFILL_EVERY = 6 * 3600            # seconds; fills in days a cloud hiccup skipped
 REVISIT_AFTER = timedelta(hours=12)  # a day kept sooner after its end is computed once more (late uploads)
+
+
+def event_row(e: dict) -> dict:
+    """One cloud event as shown to the user."""
+    return {"time": e.get("dataTimeStr"), "type": "fault" if e.get("warringType") == "F" else "alarm",
+            "code": e.get("warnCode"), "name": e.get("warringName")}
+
+
+def _event_key(e: dict) -> tuple:
+    return e.get("warnCode"), e.get("warringType"), e.get("dataTimeStr")
 
 
 def today() -> str:
@@ -70,6 +80,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self.meters: dict[str, dict] = {}          # sn -> today's kWh for the Energy dashboard
         self._energy: dict[str, dict] = {}
         self.events: dict[str, list] = {}          # sn -> alarms and faults of the last 7 days, newest first
+        self._event_months: dict[tuple, tuple] = {}  # (sn, YYYY-MM) -> (final, fetched at, rows)
         self._live_kw: dict[str, bool] = {}        # sn -> the live record's powers come in kW (kept once seen)
         self._history: OrderedDict[str, tuple[float, bool, list]] = OrderedDict()
         self._recent: dict[str, list] = {}         # sn -> today's rows, for the battery runtime
@@ -142,15 +153,32 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
 
     def _new_events(self, sn: str, events: list[dict]) -> None:
         """Keep the events and fire EVENT_TYPE for each one not seen before (not for those found at start-up)."""
-        key = lambda e: (e.get("warnCode"), e.get("warringType"), e.get("dataTimeStr"))
         if sn in self.events:
-            seen = {key(e) for e in self.events[sn]}
+            seen = {_event_key(e) for e in self.events[sn]}
             for e in reversed(events):  # oldest first
-                if key(e) not in seen:
+                if _event_key(e) not in seen:
                     self.hass.bus.async_fire(EVENT_TYPE, {
                         "sn": sn, "code": e.get("warnCode"), "name": e.get("warringName"),
                         "type": "fault" if e.get("warringType") == "F" else "alarm", "time": e.get("dataTimeStr")})
         self.events[sn] = events
+
+    async def events_month(self, sn: str, month: str) -> list[dict]:
+        """Alarms and faults of a calendar month (YYYY-MM), newest first. The cloud answers at most 7 days per query;
+        a finished month is fetched once, the current one again after 10 minutes."""
+        hit = self._event_months.get((sn, month))
+        if hit and (hit[0] or time.time() - hit[1] < EVENTS_INTERVAL_SECONDS):
+            return hit[2]
+        first = date.fromisoformat(f"{month}-01")
+        last = (first.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        spans, d = [], first
+        while d <= last:
+            spans.append((d, min(d + timedelta(days=6), last)))
+            d = spans[-1][1] + timedelta(days=1)
+        parts = await asyncio.gather(*(self.client.events(sn, f"{a} 00:00:00", f"{b} 23:59:59") for a, b in spans))
+        rows = list({_event_key(e): e for p in parts for e in p}.values())
+        rows = [event_row(e) for e in sorted(rows, key=lambda e: e.get("dataTimeStr") or "", reverse=True)]
+        self._event_months[(sn, month)] = (month < today()[:7], time.time(), rows)
+        return rows
 
     # ---- settings ----
 

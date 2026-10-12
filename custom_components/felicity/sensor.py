@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import history_time
 from .const import DOMAIN
-from .coordinator import FelicityCoordinator
+from .coordinator import FelicityCoordinator, event_row
 from .cost import cost_entities
 from .settings import ECO_RULES, SKIP, display, eco_rule_summary, is_risky, name_of, placement, spec, unit_of
 
@@ -207,9 +207,7 @@ class FelicityEventSensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        def short(e):
-            return {"time": e.get("dataTimeStr"), "type": "fault" if e.get("warringType") == "F" else "alarm",
-                    "code": e.get("warnCode"), "name": e.get("warringName")}
+        short = event_row
         e = self._events
         attrs = {"sn": self._sn, "field": "events.last", "events_7d": len(e), "faults_7d": sum(1 for x in e if x.get("warringType") == "F"),
                  "events": [short(x) for x in e[:20]]}

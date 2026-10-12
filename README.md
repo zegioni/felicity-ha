@@ -172,13 +172,14 @@ All of them find their data by themselves; no entity configuration is needed.
 | `felicity-tou-card` | The time-of-use schedule |
 | `felicity-price-card` | Price now, next zone, today's cost by zone |
 | `felicity-tariff-card` | The tariff editor, cost by day and by month, Energy dashboard set-up |
+| `felicity-events-card` | The inverter's alarms and faults: the last 7 days and any earlier month (`compact: true` shows only the last 7 days) |
 
 ### Entities
 
 | Entity | Use it for |
 |---|---|
 | **Inverter and battery sensors** | Live values: solar, grid, battery, home, voltages, temperatures; plus the cloud's daily energy |
-| **Alarms and faults** | `Last event` sensor per device with the last 7 days of alarms and faults in its attributes (checked every 10 minutes); each new one triggers the `Alarm or fault` event entity (event type `alarm` / `fault`, with `code`, `name`, `time`) and is fired as a `felicity_event` bus event, so you can build your own notifications; the panel's Overview lists them. `Internal temperature` (inverter) is there for your own over-temperature alerts |
+| **Alarms and faults** | `Last event` sensor per device with the last 7 days of alarms and faults in its attributes (checked every 10 minutes); each new one triggers the `Alarm or fault` event entity (event type `alarm` / `fault`, with `code`, `name`, `time`) and is fired as a `felicity_event` bus event, so you can build your own notifications; the panel's **Events** tab lists them, month by month. `Internal temperature` (inverter) is there for your own over-temperature alerts |
 | `sensor.electricity_tariff_current_price` | *Energy → Use an entity with current price*, automations |
 | `sensor.electricity_tariff_zone` | Automations ("run the boiler at night") |
 | `…_grid_import_today_<zone>` | Grid import per tariff zone (Energy dashboard) |

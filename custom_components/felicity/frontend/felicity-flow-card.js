@@ -108,8 +108,8 @@ const FIELDS = {
   grid_export_today: "energy.feedOutput", battery_charge_today: "energy.batCharEnergy", battery_discharge_today: "energy.batDisEnergy",
 };
 // tabs of the full card: [id, label, sections]
-const VIEWS = [["overview", "Overview", ["flow", "events", "day", "all"]], ["charts", "Charts", ["explore"]], ["settings", "Settings", ["settings"]],
-  ["work", "Work mode", ["tou"]], ["tariff", "Tariff", ["tariff"]]];
+const VIEWS = [["overview", "Overview", ["flow", "day", "all"]], ["charts", "Charts", ["explore"]], ["settings", "Settings", ["settings"]],
+  ["work", "Work mode", ["tou"]], ["tariff", "Tariff", ["tariff"]], ["events", "Events", ["events"]]];
 const SETTING_TABS = ["Mode settings", "Basic Setup", "Batt Setting", "Grid Setting", "Gen Setting", "Work Mode Setting",
   "Profession Setting", "Grid Code", "Parallel Setup"];
 // chart explorer: parameters grouped like the Felicity app's data filter. [field, label, unit]
@@ -158,7 +158,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const ZONE_COLORS = ["#c08bff", "#3ddc84", "#2ec4b6", "#ff7eb6"];
 
 // UI state survives Home Assistant re-creating the card element (it does so after load / on resource reload)
-const UI = { day: 0, unit: "day", stab: null, sn: null, view: "overview", preset: null, custom: null, period: "today", cmode: "day", cmonth: 0,
+const UI = { day: 0, unit: "day", stab: null, sn: null, view: "overview", preset: null, custom: null, period: "today", cmode: "day", cmonth: 0, emonth: 0,
   tdraft: null, tbase: null, tdraftSn: null, terr: "", tsaving: false };
 
 const STYLES = `<style>
@@ -239,6 +239,7 @@ const STYLES = `<style>
   /* sections */
   .hist{background:#ffffff0a;border-radius:16px;padding:10px 10px 8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden}
   .sec{font-size:15px;font-weight:600;margin:2px 2px 8px}
+  .sub{font-size:12px;opacity:.65;margin:10px 2px 6px}.sub:first-child{margin-top:0}
   .evl{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
   .ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-radius:10px;background:#ffb5471a}
   .ev.fault{background:#ff5c5c1f}.evt{font-size:11px;font-weight:600;color:#ffd27a}.ev.fault .evt{color:#ff9a9a}
@@ -1324,15 +1325,27 @@ class FelicityFlowCard extends HTMLElement {
 
   // ---- render and events ----
 
-  // the inverter's alarms (W) and faults (F) of the last 7 days, as the cloud keeps them; newest first
-  _events() {
-    const st = this._idx["events.last"];
-    if (!st) return `<div class="ch-empty">Not available yet</div>`;
-    const ev = st.attributes.events || [];
-    if (!ev.length) return `<div class="okbox">No alarms or faults in the last 7 days</div>`;
+  // alarms (W) and faults (F): the last 7 days from the sensor, any earlier month from the cloud
+  _evRows(ev) {
     return `<div class="evl">${ev.map((e) => `<div class="ev ${e.type}"><span class="evt">${e.type === "fault" ? "Fault" : "Alarm"}</span>
-      <span class="evn">${ESC(e.name || `Code ${e.code}`)}<small>code ${ESC(e.code)}</small></span><span class="evd">${ESC(e.time)}</span></div>`).join("")}</div>
-      ${st.attributes.events_7d > ev.length ? `<div class="xintro">Showing the latest ${ev.length} of ${st.attributes.events_7d}</div>` : ""}`;
+      <span class="evn">${ESC(e.name || `Code ${e.code}`)}<small>code ${ESC(e.code)}</small></span><span class="evd">${ESC(e.time)}</span></div>`).join("")}</div>`;
+  }
+
+  _events() {
+    const st = this._idx["events.last"], recent = (st && st.attributes.events) || [];
+    const last7 = !st ? `<div class="ch-empty">Not available yet</div>`
+      : recent.length ? this._evRows(recent) : `<div class="okbox">No alarms or faults in the last 7 days</div>`;
+    if (this._cfg.compact) return last7;
+    const ym = MONTH(UI.emonth), key = `e:${this._sn}:${ym}`;
+    if (this._sn) this._get(key, `felicity/events?sn=${this._sn}&month=${ym}`, ym === MONTH(0) ? 600000 : 0);
+    const h = this._hist[key], ev = h && h.data && h.data.events;
+    const nav = `<div class="nav"><button data-emonth="1" aria-label="Previous month">‹</button>
+      <div class="datebtn"><b>${MONTH_NAME(ym)}</b><small>${UI.emonth === 0 ? "this month" : UI.emonth === 1 ? "last month" : `${UI.emonth} months ago`}</small></div>
+      <button data-emonth="-1" ${UI.emonth === 0 ? "disabled" : ""} aria-label="Next month">›</button></div>`;
+    const body = !h ? `<div class="ch-empty">Loading…</div>` : h.error ? `<div class="tipwarn">${ESC(h.error)}</div>`
+      : !ev.length ? `<div class="ch-empty">No alarms or faults this month</div>`
+      : `<div class="xintro">${ev.length} event${ev.length === 1 ? "" : "s"}: ${ev.filter((e) => e.type === "fault").length} faults, ${ev.filter((e) => e.type !== "fault").length} alarms</div>${this._evRows(ev)}`;
+    return `<div class="sub">Last 7 days</div>${last7}<div class="sub">By month</div>${nav}${body}`;
   }
 
   _header(tabbed) {
@@ -1417,6 +1430,7 @@ class FelicityFlowCard extends HTMLElement {
     on("[data-period]", "click", (b) => { UI.period = b.dataset.period; this._redraw(); });
     on("[data-cmode]", "click", (b) => { UI.cmode = b.dataset.cmode; this._redraw(); });
     on("[data-cmonth]", "click", (b) => { UI.cmonth = Math.max(0, UI.cmonth + Number(b.dataset.cmonth)); this._redraw(); });
+    on("[data-emonth]", "click", (b) => { UI.emonth = Math.max(0, UI.emonth + Number(b.dataset.emonth)); this._redraw(); });
     this._bindSettings(on);
     this._bindTariff(on, once);
     this._bindCharts(once);
@@ -1539,6 +1553,7 @@ const WIDGETS = [
   ["felicity-tou-card", "Felicity: time-of-use schedule", "Work mode schedule timeline and today's result", ["tou"]],
   ["felicity-price-card", "Felicity: electricity price", "Price now, next tariff zone and today's cost by zone", ["price"]],
   ["felicity-tariff-card", "Felicity: tariff", "Tariff editor, cost of any day and Energy dashboard setup", ["tariff"]],
+  ["felicity-events-card", "Felicity: alarms and faults", "The inverter's alarms and faults: the last 7 days and any month (compact: true for the last 7 days only)", ["events"]],
 ];
 for (const [tag, , , show] of WIDGETS) {
   if (customElements.get(tag)) continue;

@@ -34,7 +34,7 @@ ENERGY_KEYS = {"gridInput": "grid_import", "feedOutput": "grid_export", "generat
 
 
 def views(hass: HomeAssistant) -> list[HomeAssistantView]:
-    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass)]
+    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass), EventsView(hass)]
 
 
 class BadRequest(Exception):
@@ -317,4 +317,20 @@ class PeriodView(_View):
             if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
                 raise BadRequest("month must be YYYY-MM")
             return {**coordinator.month_summary(sn, month), "sn": sn, "backfilling": coordinator.backfilling}
+        return await self._run(answer())
+
+
+class EventsView(_View):
+    """GET /api/felicity/events?sn=&month=YYYY-MM -> the inverter's alarms and faults of that month, newest first."""
+
+    url = "/api/felicity/events"
+    name = "api:felicity:events"
+
+    async def get(self, request: web.Request) -> web.Response:
+        async def answer():
+            coordinator, sn = pick_inverter(self.hass, request.query.get("sn"))
+            month = request.query.get("month") or today()[:7]
+            if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+                raise BadRequest("month must be YYYY-MM")
+            return {"sn": sn, "month": month, "events": await coordinator.events_month(sn, month)}
         return await self._run(answer())
