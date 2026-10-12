@@ -243,7 +243,7 @@ const STYLES = `<style>
   .evl{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
   .ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-radius:10px;background:#ffb5471a}
   .ev.fault{background:#ff5c5c1f}.evt{font-size:11px;font-weight:600;color:#ffd27a}.ev.fault .evt{color:#ff9a9a}
-  .evn{min-width:0;overflow-wrap:anywhere}.evn small{opacity:.55;margin-left:6px}.evd{opacity:.7;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .evn{min-width:0;overflow-wrap:anywhere}.evn small{opacity:.55;margin-left:6px}.eva{display:block;font-size:11.5px;opacity:.7;margin-top:2px;line-height:1.35}.evd{opacity:.7;white-space:nowrap;font-variant-numeric:tabular-nums}
   .xintro{font-size:12.5px;opacity:.8;margin:2px 2px 10px;line-height:1.45;max-width:760px}
   .ch-empty{font-size:12px;opacity:.6;padding:24px 0;text-align:center}
   .tipwarn{font-size:12px;background:#ffb5471a;color:#ffd27a;border-radius:10px;padding:7px 10px;margin:6px 0}
@@ -1328,7 +1328,8 @@ class FelicityFlowCard extends HTMLElement {
   // alarms (W) and faults (F): the last 7 days from the sensor, any earlier month from the cloud
   _evRows(ev) {
     return `<div class="evl">${ev.map((e) => `<div class="ev ${e.type}"><span class="evt">${e.type === "fault" ? "Fault" : "Alarm"}</span>
-      <span class="evn">${ESC(e.name || `Code ${e.code}`)}<small>code ${ESC(e.code)}</small></span><span class="evd">${ESC(e.time)}</span></div>`).join("")}</div>`;
+      <span class="evn">${ESC(e.name || `Code ${e.code}`)}<small>${e.type === "fault" ? "F" : "W"}${ESC(e.code)}</small>
+      ${e.advice ? `<span class="eva">${ESC(e.label)}: ${ESC(e.advice)}</span>` : ""}</span><span class="evd">${ESC(e.time)}</span></div>`).join("")}</div>`;
   }
 
   _events() {

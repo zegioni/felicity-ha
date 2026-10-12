@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 from .api import FelicityApiError, FelicityAuthError, FelicityClient, history_time, powers_in_kw, scale_powers
 from .const import (CONF_OUTLETS, DOMAIN, ENERGY_INTERVAL_SECONDS, EVENT_TYPE, EVENTS_INTERVAL_SECONDS, SCAN_INTERVAL_SECONDS,
                      SETTINGS_INTERVAL_SECONDS)
+from .codes import explain
 from .daystats import add_up, battery_runtime, day_totals, hourly_load, zone_split
 from .settings import ECO_RULES, is_risky, validate, validate_rule
 from .tariff import Pricer, day_bands, versions, zone_at
@@ -36,10 +37,11 @@ BACKFILL_EVERY = 6 * 3600            # seconds; fills in days a cloud hiccup ski
 REVISIT_AFTER = timedelta(hours=12)  # a day kept sooner after its end is computed once more (late uploads)
 
 
-def event_row(e: dict) -> dict:
-    """One cloud event as shown to the user."""
-    return {"time": e.get("dataTimeStr"), "type": "fault" if e.get("warringType") == "F" else "alarm",
-            "code": e.get("warnCode"), "name": e.get("warringName")}
+def event_row(e: dict, model: str | None = None) -> dict:
+    """One cloud event as shown to the user, with the manual's meaning and advice where known."""
+    kind = "fault" if e.get("warringType") == "F" else "alarm"
+    return {"time": e.get("dataTimeStr"), "type": kind, "code": e.get("warnCode"), "name": e.get("warringName"),
+            **explain(model, kind, e.get("warnCode"))}
 
 
 def _event_key(e: dict) -> tuple:
@@ -176,7 +178,8 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             d = spans[-1][1] + timedelta(days=1)
         parts = await asyncio.gather(*(self.client.events(sn, f"{a} 00:00:00", f"{b} 23:59:59") for a, b in spans))
         rows = list({_event_key(e): e for p in parts for e in p}.values())
-        rows = [event_row(e) for e in sorted(rows, key=lambda e: e.get("dataTimeStr") or "", reverse=True)]
+        model = next((d.get("deviceModel") for d in self.devices if d["deviceSn"] == sn), None)
+        rows = [event_row(e, model) for e in sorted(rows, key=lambda e: e.get("dataTimeStr") or "", reverse=True)]
         self._event_months[(sn, month)] = (month < today()[:7], time.time(), rows)
         return rows
 

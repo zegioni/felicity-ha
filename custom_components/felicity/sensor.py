@@ -207,12 +207,12 @@ class FelicityEventSensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        short = event_row
+        short = lambda x: event_row(x, self.coordinator.data[self._sn]["device"].get("deviceModel"))
         e = self._events
         attrs = {"sn": self._sn, "field": "events.last", "events_7d": len(e), "faults_7d": sum(1 for x in e if x.get("warringType") == "F"),
                  "events": [short(x) for x in e[:20]]}
         if e:
-            attrs.update({k: v for k, v in short(e[0]).items() if k != "name"})
+            attrs.update({k: v for k, v in short(e[0]).items() if k not in ("name", "label")})
             attrs["time_zone"] = e[0].get("timeZone")
         return attrs
 

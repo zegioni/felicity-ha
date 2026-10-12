@@ -179,7 +179,7 @@ All of them find their data by themselves; no entity configuration is needed.
 | Entity | Use it for |
 |---|---|
 | **Inverter and battery sensors** | Live values: solar, grid, battery, home, voltages, temperatures; plus the cloud's daily energy |
-| **Alarms and faults** | `Last event` sensor per device with the last 7 days of alarms and faults in its attributes (checked every 10 minutes); each new one triggers the `Alarm or fault` event entity (event type `alarm` / `fault`, with `code`, `name`, `time`) and is fired as a `felicity_event` bus event, so you can build your own notifications; the panel's **Events** tab lists them, month by month. `Internal temperature` (inverter) is there for your own over-temperature alerts |
+| **Alarms and faults** | `Last event` sensor per device with the last 7 days of alarms and faults in its attributes (checked every 10 minutes); each new one triggers the `Alarm or fault` event entity (event type `alarm` / `fault`, with `code`, `name`, `time`) and is fired as a `felicity_event` bus event, so you can build your own notifications; the panel's **Events** tab lists them, month by month. On IVAM inverters each code also gets its meaning and advice from the user manual (W alarms, F faults). `Internal temperature` (inverter) is there for your own over-temperature alerts |
 | `sensor.electricity_tariff_current_price` | *Energy → Use an entity with current price*, automations |
 | `sensor.electricity_tariff_zone` | Automations ("run the boiler at night") |
 | `…_grid_import_today_<zone>` | Grid import per tariff zone (Energy dashboard) |
