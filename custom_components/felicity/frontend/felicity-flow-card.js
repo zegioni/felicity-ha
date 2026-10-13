@@ -982,7 +982,7 @@ class FelicityFlowCard extends HTMLElement {
         <button class="send" data-rsend="${key}"${changed ? "" : " hidden"}>Send</button>${this._status(key)}</div>`;
     };
     return `<div class="tou-t"><div class="tt"><div class="th">${modeful ? "<span>Mode</span>" : "<span>Grid</span><span>Gen</span>"}<span>Start</span><span>Stop</span><span>Power W</span><span>Batt %</span><span></span></div>` +
-      rules.map(row).join("") + `</div></div>`;
+      rules.map(row).join("") + `</div></div><div class="sread">Power W: the charging power when Grid or Gen charging is on, otherwise the most the battery gives to the home (the rest comes from the grid)</div>`;
   }
 
   _settings() {
@@ -1034,7 +1034,7 @@ class FelicityFlowCard extends HTMLElement {
         const src = a.gridChangingEnable === "1" ? "grid" : a.genChangingEnable === "1" ? "generator" : null;
         if (src) { kind = "charge"; col = COLOR.grid; text = `Charge from ${src} to ${soc}% · ${FMT(+a.power)}`; }
         else if (soc >= 100) { kind = "hold"; col = "#9aa6b8"; text = "Keep battery at 100% (charges from grid if Grid Charge is on)"; }
-        else { kind = "use"; col = COLOR.charge; text = `Use battery down to ${soc}%`; }
+        else { kind = "use"; col = COLOR.charge; text = `Use battery down to ${soc}% · up to ${FMT(+a.power)}`; }
       }
       return { spans, start: a.startTime, stop: a.stopTime, kind, text: text + days, col, soc };
     }).filter(Boolean);

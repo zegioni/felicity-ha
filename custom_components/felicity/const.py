@@ -6,8 +6,8 @@ API = "https://open-api.felicitysolar.com"
 PUBLIC_KEY = "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAK0GDivaRzIKeTmQnAxAYh2LChuHWDp0yHZ0zIvm+Eoi7J+rx7phqR7EtkBDO3HWqAXVkNDeeQaU32P5w1Q4FVUCAwEAAQ=="
 SCAN_INTERVAL_SECONDS = 15
 ENERGY_INTERVAL_SECONDS = 300
-SETTINGS_INTERVAL_SECONDS = 600
-EVENTS_INTERVAL_SECONDS = 600
+SETTINGS_INTERVAL_SECONDS = 120  # one request per inverter; changes made in the Felicity app show up within 2 minutes
+EVENTS_INTERVAL_SECONDS = 120
 EVENT_TYPE = "felicity_event"  # fired on the bus for each new alarm / fault
 CONF_OUTLETS = "matter_outlets"  # option: create the virtual Matter outlets (Home / Battery / Grid)
 CONF_OUTLET_LABEL = "matter_label"  # option: label put on the outlet devices, for bridges that pick devices by label

@@ -178,7 +178,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
 
     async def events_month(self, sn: str, month: str) -> list[dict]:
         """Alarms and faults of a calendar month (YYYY-MM), newest first. The cloud answers at most 7 days per query;
-        a month is fetched once when it ended more than a day ago (late uploads), otherwise again after 10 minutes."""
+        a month is fetched once when it ended more than a day ago (late uploads), otherwise again after EVENTS_INTERVAL_SECONDS."""
         async with self._event_months_lock:  # the panel and a widget may ask for the same month at once
             return await self._events_month(sn, month)
 
