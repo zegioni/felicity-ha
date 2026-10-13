@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import FelicityApiError, FelicityAuthError, FelicityClient, history_time, powers_in_kw, scale_powers
 from .const import (CONF_OUTLETS, DOMAIN, ENERGY_INTERVAL_SECONDS, EVENT_TYPE, EVENTS_INTERVAL_SECONDS, SCAN_INTERVAL_SECONDS,
-                     SETTINGS_INTERVAL_SECONDS)
+                     SETTINGS_INTERVAL_SECONDS, UPLOAD_SECONDS)
 from .codes import explain
 from .daystats import add_up, battery_runtime, day_totals, hourly_load, zone_split
 from .settings import ECO_RULES, is_risky, validate, validate_rule
@@ -86,6 +86,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self._event_months: dict[tuple, tuple] = {}  # (sn, YYYY-MM) -> (final, fetched at, rows)
         self._event_months_lock = asyncio.Lock()
         self._live_kw: dict[str, bool] = {}        # sn -> the live record's powers come in kW (kept once seen)
+        self._history_kw: dict[str, bool] = {}     # sn -> False when history records' powers come in W (to be scaled)
         self._history: OrderedDict[str, tuple[float, bool, list]] = OrderedDict()
         self._recent: dict[str, list] = {}         # sn -> today's rows, for the battery runtime
         # sn -> [day, {key: value}]: today's totals never go down (stored, so restarts keep it)
@@ -125,6 +126,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                     self._live_kw[sn] = kw
                 if self._live_kw.get(sn):
                     scale_powers(r, 1000)
+            self.update_interval = timedelta(seconds=self._next_poll(live))
             if self._due("energy", ENERGY_INTERVAL_SECONDS):
                 for sn in sns:
                     try:
@@ -157,6 +159,27 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                                 "live": live.get(d["deviceSn"], {}), "energy": self._energy.get(d["deviceSn"], {}),
                                 "events": self.events.get(d["deviceSn"], [])}
                 for d in self.devices}
+
+    @staticmethod
+    def _next_poll(live: dict[str, dict]) -> float:
+        """Seconds to the next poll: just after the next upload is due (a record about every UPLOAD_SECONDS), every
+        SCAN_INTERVAL_SECONDS while a due upload is late, once a minute for a device that has gone quiet."""
+        now, waits = dt_util.utcnow(), []
+        for r in live.values():
+            if (t := history_time(r.get("createTime"))) is None:
+                continue
+            due = (t - now).total_seconds() + UPLOAD_SECONDS + 3
+            waits.append(due if due > 0 else SCAN_INTERVAL_SECONDS if due > -300 else UPLOAD_SECONDS)
+        return min(max(min(waits, default=SCAN_INTERVAL_SECONDS), 10), UPLOAD_SECONDS)
+
+    async def settings_now(self, sn: str) -> float:
+        """Re-read the settings for a viewer of the panel unless they were read in the last 30 seconds; returns when
+        they were read."""
+        if time.time() - self._last.get("settings", 0) > 30:
+            self._last["settings"] = time.time()
+            await self._refresh_settings()
+            self.async_update_listeners()
+        return self._last["settings"]
 
     def _model(self, sn: str) -> str | None:
         return next((d.get("deviceModel") for d in self.devices if d["deviceSn"] == sn), None)
@@ -274,7 +297,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             self._history.move_to_end(key)
             return hit[2]
         if key not in self._fetching:
-            self._fetching[key] = self.hass.async_create_task(self._download(sn, day))
+            self._fetching[key] = self.hass.async_create_task(self._download(sn, day, hit[2] if hit else None))
         try:
             rows = await asyncio.shield(self._fetching[key])
         finally:
@@ -283,15 +306,28 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             self._keep(key, day, rows)
         return rows
 
-    async def _download(self, sn: str, day: str) -> list[dict]:
+    async def _download(self, sn: str, day: str, have: list[dict] | None = None) -> list[dict]:
+        """The day's rows. With rows already kept, only the newest page (300 minutes) is fetched and appended when it
+        overlaps them; otherwise the whole day is fetched."""
+        if have:
+            page = (await self.client.history_page(sn, day)).get("dataList") or []
+            newest = have[-1].get("deviceDataTime") or ""
+            fresh = [r for r in page if (r.get("deviceDataTime") or "") > newest]
+            if len(fresh) < len(page):  # the page reaches back into what is kept: nothing was missed
+                return have + self._prepare(sn, sorted(fresh, key=lambda r: r.get("deviceDataTime") or ""))
+        return self._prepare(sn, await self.client.history(sn, day))
+
+    def _prepare(self, sn: str, records: list[dict]) -> list[dict]:
         rows = []
-        for r in await self.client.history(sn, day):
+        for r in records:
             utc = history_time(r.get("deviceDataTime"))
             if utc is not None:
                 r["_local"] = dt_util.as_local(utc)
                 rows.append(r)
         votes = [v for v in map(powers_in_kw, rows) if v is not None]
-        if votes and votes.count(False) > len(votes) / 2:  # history powers are kept in kW
+        if votes:  # a few new rows may carry too little flow to tell: then the device's last verdict holds
+            self._history_kw[sn] = votes.count(False) <= len(votes) / 2
+        if not self._history_kw.get(sn, True):  # history powers are kept in kW
             for r in rows:
                 scale_powers(r, 0.001)
         return rows

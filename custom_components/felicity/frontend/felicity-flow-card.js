@@ -985,7 +985,11 @@ class FelicityFlowCard extends HTMLElement {
       rules.map(row).join("") + `</div></div><div class="sread">Power W: the charging power when Grid or Gen charging is on, otherwise the most the battery gives to the home (the rest comes from the grid)</div>`;
   }
 
+  // while the settings or the schedule are on screen, the integration re-reads them every minute
+  _freshSettings() { if (this._sn) this._get(`s:${this._sn}`, `felicity/setting?sn=${this._sn}`, 60000); }
+
   _settings() {
+    this._freshSettings();
     const { tabs, readAt } = this._settingsData();
     const names = [...SETTING_TABS, ...Object.keys(tabs).filter((t) => !SETTING_TABS.includes(t)).sort()].filter((t) => tabs[t]);
     if (!names.length) return `<div class="ch-empty">No settings yet (they are read every 10 minutes)</div>`;
@@ -1041,6 +1045,7 @@ class FelicityFlowCard extends HTMLElement {
   }
 
   _tou() {
+    this._freshSettings();
     const rules = this._rules();
     const sv = (key) => (this._set[key] ? this._set[key].state : "—");
     const W = Math.round(Math.max(300, this._cw() - 56)), H = 56, L = 14, R = 14;
@@ -1340,7 +1345,7 @@ class FelicityFlowCard extends HTMLElement {
       : `<div class="okbox">No alarms or faults in the last 7 days</div>`;
     if (this._cfg.compact) return last7;
     const ym = MONTH(UI.emonth), key = `e:${this._sn}:${ym}`;
-    if (this._sn) this._get(key, `felicity/events?sn=${this._sn}&month=${ym}`, UI.emonth <= 1 ? 600000 : 0);
+    if (this._sn) this._get(key, `felicity/events?sn=${this._sn}&month=${ym}`, UI.emonth <= 1 ? 120000 : 0);
     const h = this._hist[key], ev = h && h.data && h.data.events;
     const nav = `<div class="nav"><button data-emonth="1" aria-label="Previous month">‹</button>
       <div class="datebtn"><b>${MONTH_NAME(ym)}</b><small>${UI.emonth === 0 ? "this month" : UI.emonth === 1 ? "last month" : `${UI.emonth} months ago`}</small></div>

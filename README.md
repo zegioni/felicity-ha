@@ -29,7 +29,7 @@ and Matter plugs for Apple Home — through the official Felicity cloud API, no 
 
 The Felicity app shows your system, but it can't switch a lamp when the battery is full. It also doesn't know what your
 electricity costs, and it isn't next to the rest of your home. This integration brings all of it into Home Assistant:
-- live data as soon as the cloud has it (polled every 15 seconds);
+- live data as soon as the cloud has it, without hammering the cloud;
 - the inverter's full settings, with guard rails;
 - the money side: what each kWh cost, in which tariff zone, and what the solar and the battery saved you.
 
@@ -221,7 +221,11 @@ Only the IVAM is tested on hardware; the others are built from the API documenta
   per cent.
 - **How fresh the data is.** Data comes from the Felicity cloud (Open API):
   - the inverter uploads about one record per minute, and a record reaches the API about 1–2 minutes after it was measured;
-  - the integration polls every 15 seconds, so it shows each record as soon as the cloud has it;
+  - the integration times its polls to just after the next record is due, then checks every 15 seconds while it is
+    late (once a minute for a device that went quiet), so each record shows up seconds after it reaches the cloud;
+  - today's totals and costs are refreshed every 5 minutes from the newest page of the day's history (the whole day
+    is downloaded only when something was missed); settings are read every 5 minutes, and every minute while the
+    panel shows them; alarms and faults every 2 minutes;
   - the card's *Updated … ago* is the age of that record (the *Last data* sensor);
   - the Felicity app can show a newer value for a moment: it gets live data through its own channel, which the Open API does not offer.
 - **History timestamps** from the API are Beijing time and powers are in kW; both are converted.

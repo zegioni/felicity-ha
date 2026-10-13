@@ -214,10 +214,17 @@ class SeriesView(_View):
 
 
 class SettingView(_View):
-    """POST /api/felicity/setting {sn, key, value, confirm} -> send one inverter setting (administrators only)."""
+    """POST /api/felicity/setting {sn, key, value, confirm} -> send one inverter setting (administrators only).
+    GET /api/felicity/setting?sn= -> re-read the settings now (at most every 30 s), while the panel shows them."""
 
     url = "/api/felicity/setting"
     name = "api:felicity:setting"
+
+    async def get(self, request: web.Request) -> web.Response:
+        async def answer():
+            coordinator, sn = pick_inverter(self.hass, request.query.get("sn"))
+            return {"sn": sn, "read_at": await coordinator.settings_now(sn)}
+        return await self._run(answer())
 
     async def post(self, request: web.Request) -> web.Response:
         if not request["hass_user"].is_admin:

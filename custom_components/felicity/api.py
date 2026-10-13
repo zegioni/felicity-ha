@@ -160,11 +160,15 @@ class FelicityClient:
         return await self._request("GET", "/openApi/cmd/deviceSetting/params",
                                    params={"typeCode": type_code, "subTypeCode": sub_type_code}) or []
 
+    async def history_page(self, sn: str, date: str, n: int = 1) -> dict:
+        """One page of a day's realtime records ({dataList, totalPage}); the cloud lists the newest first."""
+        return await self._request("GET", f"/openApi/data/deviceDataHistory/{sn}",
+                                   params={"dateStr": f"{date} 00:00:00", "pageNum": n, "pageSize": 300}) or {}
+
     async def history(self, sn: str, date: str) -> list[dict]:
         """All realtime records of one device for a day (date = YYYY-MM-DD), oldest first. Pages are fetched in parallel."""
-        async def page(n):
-            return await self._request("GET", f"/openApi/data/deviceDataHistory/{sn}",
-                                       params={"dateStr": f"{date} 00:00:00", "pageNum": n, "pageSize": 300}) or {}
+        def page(n):
+            return self.history_page(sn, date, n)
         first = await page(1)
         out: list[dict] = list(first.get("dataList") or [])
         total = min(int(first.get("totalPage") or 1), 20)
