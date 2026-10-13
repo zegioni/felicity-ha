@@ -86,6 +86,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self._event_months: dict[tuple, tuple] = {}  # (sn, YYYY-MM) -> (final, fetched at, rows)
         self._event_months_lock = asyncio.Lock()
         self._live_kw: dict[str, bool] = {}        # sn -> the live record's powers come in kW (kept once seen)
+        self._settings_lock = asyncio.Lock()
         self._history_kw: dict[str, bool] = {}     # sn -> False when history records' powers come in W (to be scaled)
         self._history: OrderedDict[str, tuple[float, bool, list]] = OrderedDict()
         self._recent: dict[str, list] = {}         # sn -> today's rows, for the battery runtime
@@ -175,10 +176,11 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
     async def settings_now(self, sn: str) -> float:
         """Re-read the settings for a viewer of the panel unless they were read in the last 30 seconds; returns when
         they were read."""
-        if time.time() - self._last.get("settings", 0) > 30:
-            self._last["settings"] = time.time()
-            await self._refresh_settings()
-            self.async_update_listeners()
+        async with self._settings_lock:  # several viewers at once: one read
+            if time.time() - self._last.get("settings", 0) > 30:
+                await self._refresh_settings(strict=True)
+                self._last["settings"] = time.time()
+                self.async_update_listeners()
         return self._last["settings"]
 
     def _model(self, sn: str) -> str | None:
@@ -297,7 +299,9 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             self._history.move_to_end(key)
             return hit[2]
         if key not in self._fetching:
-            self._fetching[key] = self.hass.async_create_task(self._download(sn, day, hit[2] if hit else None))
+            # the fetch that makes the day final takes it whole, so late or out-of-order uploads are in
+            have = hit[2] if hit and dt_util.now() <= day_end(day) + FINAL_AFTER else None
+            self._fetching[key] = self.hass.async_create_task(self._download(sn, day, have))
         try:
             rows = await asyncio.shield(self._fetching[key])
         finally:
@@ -311,21 +315,25 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         overlaps them; otherwise the whole day is fetched."""
         if have:
             page = (await self.client.history_page(sn, day)).get("dataList") or []
+            times = sorted(r.get("deviceDataTime") or "" for r in page)
             newest = have[-1].get("deviceDataTime") or ""
-            fresh = [r for r in page if (r.get("deviceDataTime") or "") > newest]
-            if len(fresh) < len(page):  # the page reaches back into what is kept: nothing was missed
-                return have + self._prepare(sn, sorted(fresh, key=lambda r: r.get("deviceDataTime") or ""))
+            if times and times[0] <= newest <= times[-1]:  # the page spans the newest kept record: nothing was missed
+                kept = {r.get("deviceDataTime") for r in have}
+                fresh = [r for r in page if r.get("deviceDataTime") not in kept]  # late arrivals inside the page too
+                rows = have + self._prepare(sn, fresh, vote=False)
+                return sorted(rows, key=lambda r: r.get("deviceDataTime") or "") if fresh else rows
         return self._prepare(sn, await self.client.history(sn, day))
 
-    def _prepare(self, sn: str, records: list[dict]) -> list[dict]:
+    def _prepare(self, sn: str, records: list[dict], vote: bool = True) -> list[dict]:
+        """Rows with "_local", powers in kW. vote=False (a few appended rows): the unit found for the whole day holds."""
         rows = []
         for r in records:
             utc = history_time(r.get("deviceDataTime"))
             if utc is not None:
                 r["_local"] = dt_util.as_local(utc)
                 rows.append(r)
-        votes = [v for v in map(powers_in_kw, rows) if v is not None]
-        if votes:  # a few new rows may carry too little flow to tell: then the device's last verdict holds
+        votes = [v for v in map(powers_in_kw, rows) if v is not None] if vote else []
+        if votes:
             self._history_kw[sn] = votes.count(False) <= len(votes) / 2
         if not self._history_kw.get(sn, True):  # history powers are kept in kW
             for r in rows:

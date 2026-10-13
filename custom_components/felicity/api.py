@@ -167,13 +167,11 @@ class FelicityClient:
 
     async def history(self, sn: str, date: str) -> list[dict]:
         """All realtime records of one device for a day (date = YYYY-MM-DD), oldest first. Pages are fetched in parallel."""
-        def page(n):
-            return self.history_page(sn, date, n)
-        first = await page(1)
+        first = await self.history_page(sn, date, 1)
         out: list[dict] = list(first.get("dataList") or [])
         total = min(int(first.get("totalPage") or 1), 20)
         if total > 1:
-            for d in await asyncio.gather(*(page(n) for n in range(2, total + 1))):
+            for d in await asyncio.gather(*(self.history_page(sn, date, n) for n in range(2, total + 1))):
                 out += d.get("dataList") or []
         out.sort(key=lambda r: r.get("deviceDataTime") or "")
         return out

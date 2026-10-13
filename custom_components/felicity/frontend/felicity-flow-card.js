@@ -986,13 +986,17 @@ class FelicityFlowCard extends HTMLElement {
   }
 
   // while the settings or the schedule are on screen, the integration re-reads them every minute
-  _freshSettings() { if (this._sn) this._get(`s:${this._sn}`, `felicity/setting?sn=${this._sn}`, 60000); }
+  _freshSettings() {
+    if (!this._sn || Date.now() - (this._setAsked || 0) < 60000) return;
+    this._setAsked = Date.now();
+    this._hass.callApi("GET", `felicity/setting?sn=${this._sn}`).catch(() => {});  // the new values arrive with the entities
+  }
 
   _settings() {
     this._freshSettings();
     const { tabs, readAt } = this._settingsData();
     const names = [...SETTING_TABS, ...Object.keys(tabs).filter((t) => !SETTING_TABS.includes(t)).sort()].filter((t) => tabs[t]);
-    if (!names.length) return `<div class="ch-empty">No settings yet (they are read every 10 minutes)</div>`;
+    if (!names.length) return `<div class="ch-empty">No settings yet (they are read every few minutes)</div>`;
     const tab = names.includes(UI.stab) ? UI.stab : names[0];
     const pills = `<div class="pills">${names.map((t) => `<button data-stab="${ESC(t)}" class="${t === tab ? "on" : ""}">${ESC(t)}</button>`).join("")}</div>`;
     const fmtV = (r) => {
@@ -1038,7 +1042,7 @@ class FelicityFlowCard extends HTMLElement {
         const src = a.gridChangingEnable === "1" ? "grid" : a.genChangingEnable === "1" ? "generator" : null;
         if (src) { kind = "charge"; col = COLOR.grid; text = `Charge from ${src} to ${soc}% · ${FMT(+a.power)}`; }
         else if (soc >= 100) { kind = "hold"; col = "#9aa6b8"; text = "Keep battery at 100% (charges from grid if Grid Charge is on)"; }
-        else { kind = "use"; col = COLOR.charge; text = `Use battery down to ${soc}% · up to ${FMT(+a.power)}`; }
+        else { kind = "use"; col = COLOR.charge; text = `Use battery down to ${soc}%` + (+a.power > 0 ? ` · up to ${FMT(+a.power)}` : ""); }
       }
       return { spans, start: a.startTime, stop: a.stopTime, kind, text: text + days, col, soc };
     }).filter(Boolean);
