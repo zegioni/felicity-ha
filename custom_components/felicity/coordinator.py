@@ -87,7 +87,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self._event_months_lock = asyncio.Lock()
         self._live_kw: dict[str, bool] = {}        # sn -> the live record's powers come in kW (kept once seen)
         self._settings_lock = asyncio.Lock()
-        self._history_kw: dict[str, bool] = {}     # sn -> False when history records' powers come in W (to be scaled)
+        self._history_kw: dict[str, bool] = {}     # sn:day -> False when that day's history powers come in W (scaled)
         self._history: OrderedDict[str, tuple[float, bool, list]] = OrderedDict()
         self._recent: dict[str, list] = {}         # sn -> today's rows, for the battery runtime
         # sn -> [day, {key: value}]: today's totals never go down (stored, so restarts keep it)
@@ -127,7 +127,6 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                     self._live_kw[sn] = kw
                 if self._live_kw.get(sn):
                     scale_powers(r, 1000)
-            self.update_interval = timedelta(seconds=self._next_poll(live))
             if self._due("energy", ENERGY_INTERVAL_SECONDS):
                 for sn in sns:
                     try:
@@ -151,37 +150,41 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         except FelicityApiError as err:
             if self.data is None:
                 self._last.pop("settings", None)
+            self.update_interval = timedelta(seconds=30)  # the cloud failed: not every 10 s
             raise UpdateFailed(str(err)) from err
         # (not in the first refresh: the entities, which publish the result, do not exist yet)
         if self.data is not None and self._due("costs", ENERGY_INTERVAL_SECONDS) and not (self._costs_task and not self._costs_task.done()):
             self._costs_task = self.config_entry.async_create_background_task(
                 self.hass, self.refresh_costs(), "felicity costs")
+        # timed from the end of this update (HA counts the interval from here), on the inverters' uploads: battery
+        # packs may upload less often, and their record comes with the same request anyway
+        self.update_interval = timedelta(seconds=self._next_poll([live[sn] for sn in self.inverters if sn in live]))
         return {d["deviceSn"]: {"device": d, "settings": self.settings.get(d["deviceSn"], {}),
                                 "live": live.get(d["deviceSn"], {}), "energy": self._energy.get(d["deviceSn"], {}),
                                 "events": self.events.get(d["deviceSn"], [])}
                 for d in self.devices}
 
     @staticmethod
-    def _next_poll(live: dict[str, dict]) -> float:
+    def _next_poll(records: list[dict]) -> float:
         """Seconds to the next poll: just after the next upload is due (a record about every UPLOAD_SECONDS), every
         SCAN_INTERVAL_SECONDS while a due upload is late, once a minute for a device that has gone quiet."""
         now, waits = dt_util.utcnow(), []
-        for r in live.values():
+        for r in records:
             if (t := history_time(r.get("createTime"))) is None:
                 continue
             due = (t - now).total_seconds() + UPLOAD_SECONDS + 3
             waits.append(due if due > 0 else SCAN_INTERVAL_SECONDS if due > -300 else UPLOAD_SECONDS)
         return min(max(min(waits, default=SCAN_INTERVAL_SECONDS), 10), UPLOAD_SECONDS)
 
-    async def settings_now(self, sn: str) -> float:
-        """Re-read the settings for a viewer of the panel unless they were read in the last 30 seconds; returns when
-        they were read."""
+    async def settings_now(self) -> float:
+        """Re-read the inverters' settings for a viewer of the panel unless they were read in the last 30 seconds;
+        returns when they were last read in full (an inverter that failed is retried at the next request)."""
         async with self._settings_lock:  # several viewers at once: one read
             if time.time() - self._last.get("settings", 0) > 30:
-                await self._refresh_settings(strict=True)
-                self._last["settings"] = time.time()
+                if await self._refresh_settings():
+                    self._last["settings"] = time.time()
                 self.async_update_listeners()
-        return self._last["settings"]
+        return self._last.get("settings", 0)
 
     def _model(self, sn: str) -> str | None:
         return next((d.get("deviceModel") for d in self.devices if d["deviceSn"] == sn), None)
@@ -226,7 +229,9 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
 
     # ---- settings ----
 
-    async def _refresh_settings(self, strict: bool = False) -> None:
+    async def _refresh_settings(self, strict: bool = False) -> bool:
+        """Read every inverter's settings; False when one of them failed (strict: raise instead)."""
+        ok = True
         for d in self.devices:
             sn = d["deviceSn"]
             if not d.get("masterVersion"):
@@ -241,9 +246,11 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             except FelicityApiError as err:
                 if strict:
                     raise
+                ok = False
                 _LOGGER.debug("settings for %s: %s", sn, err)
             if self.data and sn in self.data:
                 self.data[sn]["settings"] = self.settings.get(sn, {})
+        return ok
 
     async def write_setting(self, sn: str, key: str, value, confirmed: bool = False) -> dict:
         """Validate and send one setting, then re-read the settings a few times so the UI shows the new value.
@@ -298,16 +305,16 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         if hit and (hit[1] or time.time() - hit[0] < 120):
             self._history.move_to_end(key)
             return hit[2]
+        # the fetch that makes the day final takes it whole, so late or out-of-order uploads are in
+        have = hit[2] if hit and dt_util.now() <= day_end(day) + FINAL_AFTER else None
         if key not in self._fetching:
-            # the fetch that makes the day final takes it whole, so late or out-of-order uploads are in
-            have = hit[2] if hit and dt_util.now() <= day_end(day) + FINAL_AFTER else None
             self._fetching[key] = self.hass.async_create_task(self._download(sn, day, have))
         try:
             rows = await asyncio.shield(self._fetching[key])
         finally:
             self._fetching.pop(key, None)
         if cache:
-            self._keep(key, day, rows)
+            self._keep(key, day, rows, whole=not have)
         return rows
 
     async def _download(self, sn: str, day: str, have: list[dict] | None = None) -> list[dict]:
@@ -320,28 +327,30 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             if times and times[0] <= newest <= times[-1]:  # the page spans the newest kept record: nothing was missed
                 kept = {r.get("deviceDataTime") for r in have}
                 fresh = [r for r in page if r.get("deviceDataTime") not in kept]  # late arrivals inside the page too
-                rows = have + self._prepare(sn, fresh, vote=False)
+                rows = have + self._prepare(f"{sn}:{day}", fresh, vote=False)
                 return sorted(rows, key=lambda r: r.get("deviceDataTime") or "") if fresh else rows
-        return self._prepare(sn, await self.client.history(sn, day))
+        return self._prepare(f"{sn}:{day}", await self.client.history(sn, day))
 
-    def _prepare(self, sn: str, records: list[dict], vote: bool = True) -> list[dict]:
-        """Rows with "_local", powers in kW. vote=False (a few appended rows): the unit found for the whole day holds."""
+    def _prepare(self, key: str, records: list[dict], vote: bool = True) -> list[dict]:
+        """Rows with "_local", powers in kW. A whole day votes on its unit (no votes: kept as is); vote=False (rows
+        appended to that day) uses the unit found for it."""
         rows = []
         for r in records:
             utc = history_time(r.get("deviceDataTime"))
             if utc is not None:
                 r["_local"] = dt_util.as_local(utc)
                 rows.append(r)
-        votes = [v for v in map(powers_in_kw, rows) if v is not None] if vote else []
-        if votes:
-            self._history_kw[sn] = votes.count(False) <= len(votes) / 2
-        if not self._history_kw.get(sn, True):  # history powers are kept in kW
+        if vote:
+            votes = [v for v in map(powers_in_kw, rows) if v is not None]
+            self._history_kw[key] = not votes or votes.count(False) <= len(votes) / 2
+        if not self._history_kw.get(key, True):  # history powers are kept in kW
             for r in rows:
                 scale_powers(r, 0.001)
         return rows
 
-    def _keep(self, key: str, day: str, rows: list[dict]) -> None:
-        self._history[key] = (time.time(), bool(rows) and dt_util.now() > day_end(day) + FINAL_AFTER, rows)
+    def _keep(self, key: str, day: str, rows: list[dict], whole: bool = True) -> None:
+        final = whole and bool(rows) and dt_util.now() > day_end(day) + FINAL_AFTER  # an append never makes it final
+        self._history[key] = (time.time(), final, rows)
         self._history.move_to_end(key)
         while len(self._history) > HISTORY_DAYS_CACHED:
             self._history.popitem(last=False)

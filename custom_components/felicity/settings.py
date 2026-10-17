@@ -285,4 +285,8 @@ def eco_rule_summary(rule: dict) -> str | None:
     if str(soc) == "100":
         return text + " · keep the battery full"
     # without grid / generator charging the rule's power is the most the battery gives to the home
-    return text + f" · use battery down to {soc}%" + (f" at up to {power} W" if str(power or 0) not in ("0", "0.0") else "")
+    try:
+        limit = float(power) > 0
+    except (TypeError, ValueError):
+        limit = False
+    return text + f" · use battery down to {soc}%" + (f" at up to {power} W" if limit else "")

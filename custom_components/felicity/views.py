@@ -223,7 +223,7 @@ class SettingView(_View):
     async def get(self, request: web.Request) -> web.Response:
         async def answer():
             coordinator, sn = pick_inverter(self.hass, request.query.get("sn"))
-            return {"sn": sn, "read_at": await coordinator.settings_now(sn)}
+            return {"sn": sn, "read_at": await coordinator.settings_now()}
         return await self._run(answer())
 
     async def post(self, request: web.Request) -> web.Response:
