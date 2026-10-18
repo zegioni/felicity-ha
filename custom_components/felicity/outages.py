@@ -143,8 +143,9 @@ def _day_slots(hours: dict) -> list[str]:
 
 
 def schedule(preset: dict, fact: dict, queue: str | None, now: datetime) -> dict:
-    """Today and tomorrow for a queue: the announced schedule where DTEK published one ("fact"), else the week's plan
-    ("plan", where outages are only possible), plus the week's plan and what follows from it right now."""
+    """Today and tomorrow for a queue as DTEK announced them ("fact"), and what follows from that right now. Without
+    an announced schedule there is power by the schedule: the week's plan (where outages are always "possible") is
+    kept apart, for display only once outages are announced."""
     now = now.astimezone(KYIV)
     days, plan = [], {}
     for wd, hours in ((preset.get("data") or {}).get(queue) or {}).items():
@@ -152,9 +153,8 @@ def schedule(preset: dict, fact: dict, queue: str | None, now: datetime) -> dict
     for offset in (0, 1):
         day = (now + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
         announced = ((fact.get("data") or {}).get(str(int(day.timestamp()))) or {}).get(queue)
-        slots = _day_slots(announced) if announced else plan.get(str(day.isoweekday()))
-        days.append({"date": day.date().isoformat(), "source": "fact" if announced else "plan" if slots else None,
-                     "slots": slots or []})
+        days.append({"date": day.date().isoformat(), "source": "fact" if announced else None,
+                     "slots": _day_slots(announced) if announced else []})
     flat = [(datetime.fromisoformat(d["date"]).replace(tzinfo=KYIV) + timedelta(minutes=30 * i), s, d["source"])
             for d in days for i, s in enumerate(d["slots"])]
     cur = next((x for x in flat if x[0] <= now < x[0] + timedelta(minutes=30)), None)
@@ -176,7 +176,9 @@ def schedule(preset: dict, fact: dict, queue: str | None, now: datetime) -> dict
 
     off = run({"off"})
     maybe = run({"maybe"})
-    return {"queue": queue, "now": cur[1] if cur else None, "now_source": cur[2] if cur else None,
+    announced = any(d["source"] for d in days)
+    return {"queue": queue, "announced": announced,
+            "now": cur[1] if cur else "on" if queue else None, "now_source": cur[2] if cur else None,
             "next_off": [t.isoformat() if t else None for t in off],
             "next_maybe": [t.isoformat() if t else None for t in maybe],
             "days": days, "plan": plan, "updated": fact.get("update") or preset.get("updateFact"),

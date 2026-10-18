@@ -240,9 +240,17 @@ const STYLES = `<style>
   .hist{background:#ffffff0a;border-radius:16px;padding:10px 10px 8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden}
   .sec{font-size:15px;font-weight:600;margin:2px 2px 8px}
   .sub{font-size:12px;opacity:.65;margin:10px 2px 6px}
-  .ostat{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin-bottom:8px;font-size:12.5px}
-  .opill{padding:4px 10px;border-radius:10px;font-weight:600;font-size:13px;background:var(--o);color:#0d1118}
-  .orow{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin:3px 0}.orow span{opacity:.75}.orow b{text-align:right}
+  .ocard{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:color-mix(in srgb,var(--o) 14%,transparent);margin-bottom:10px}
+  .odot{width:12px;height:12px;border-radius:50%;flex:none;background:var(--o);box-shadow:0 0 0 4px color-mix(in srgb,var(--o) 25%,transparent)}
+  .ocard b{display:block;font-size:17px}.ocard small{display:block;font-size:12.5px;opacity:.8;margin-top:2px}
+  .oaddr{font-size:12px;opacity:.65;margin:-4px 2px 10px}.oaddr b{opacity:1;color:#e9eef7}
+  .orow{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin:3px 2px}.orow span{opacity:.7}.orow b{text-align:right;font-weight:600}
+  .oday{position:relative;display:grid;grid-template-columns:repeat(48,1fr);gap:1px;height:14px;margin-top:4px}
+  .oday i{background:var(--c);border-radius:1px}.oday i:first-child{border-radius:4px 1px 1px 4px}.oday i:last-of-type{border-radius:1px 4px 4px 1px}
+  .oday .nowm{top:-3px;bottom:-3px}
+  .owin{font-size:11.5px;margin:4px 2px 0;opacity:.85}.owin span{color:var(--c);font-weight:600}
+  .owk{display:grid;grid-template-columns:30px 1fr;align-items:center;gap:2px 6px;font-size:10.5px}.owk>span{opacity:.55}.owk>span.on{opacity:1;font-weight:700}
+  .owk .oday{height:10px;margin:0}
   .evl{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
   .ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-radius:10px;background:#ffb5471a}
   .ev.fault{background:#ff5c5c1f}.evt{font-size:11px;font-weight:600;color:#ffd27a}.ev.fault .evt{color:#ff9a9a}
@@ -1374,37 +1382,57 @@ class FelicityFlowCard extends HTMLElement {
     if (!d.configured) return `<div class="xintro">Shows your queue (черга), today's and tomorrow's outage schedule and the week's plan from the website of your DTEK grid company (Odesa, Dnipro, Kyiv and Kyiv region).<br>
       Turn it on in <b>Settings → Devices &amp; services → Felicity → Configure → Power outage schedule (DTEK)</b> and pick your address.</div>`;
     if (!d.days) return `<div class="tipwarn">No schedule yet: ${ESC(d.error || "")}${d.blocked ? " — the DTEK site answered with its bot check; it is retried every 15 minutes." : ""}</div>`;
-    const ST = { on: ["Power on", "#3ddc84"], off: ["Outage", "#ff5c5c"], maybe: ["Outage possible", "#ffb547"], unknown: ["No data", "#555"] };
-    const zones = Object.fromEntries(Object.entries(ST).map(([k, [name, color]]) => [k, { name, color }]));
-    const bands = (slots) => {  // 48 half hours -> [from h, to h, state]
-      const out = [];
-      slots.forEach((s, i) => { const l = out[out.length - 1]; if (l && l[2] === s) l[1] = (i + 1) / 2; else out.push([i / 2, (i + 1) / 2, s]); });
-      return out;
+    // power on stays quiet, outages stand out
+    const C = { on: "#3ddc8438", off: "#ff5c5c", maybe: "#ffb547", unknown: "#ffffff14" };
+    const runs = (slots, state) => {  // "05:30–12:30" stretches of one state
+      const out = []; let a = null;
+      slots.forEach((x, i) => { if (x === state && a === null) a = i; if (x !== state && a !== null) { out.push([a, i]); a = null; } });
+      if (a !== null) out.push([a, slots.length]);
+      const hm = (i) => `${PAD(Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`;
+      return out.map(([x, y]) => `${hm(x)}–${hm(y)}`);
     };
-    const span = (a, b) => (a ? `${CLOCK(a)}–${b ? CLOCK(b) : "…"}${new Date(a).toDateString() !== new Date().toDateString() ? " tomorrow" : ""}` : null);
-    const q = (d.queues || []).map((x) => (d.queue_names || {})[x] || x).join(", ") || "—";
-    const a = d.address || {}, now = ST[d.now] || ST.unknown;
-    const src = (s) => (s === "fact" ? "announced by DTEK" : s === "plan" ? "week's plan: outages are only possible" : "no schedule");
+    const bar = (slots, today) => {
+      const n = new Date(), pos = (n.getHours() + n.getMinutes() / 60) / 24 * 100;
+      return `<div class="oday">${slots.map((x) => `<i style="--c:${C[x] || C.unknown}"></i>`).join("")}${today ? `<div class="nowm" style="left:${pos}%"></div>` : ""}</div>`;
+    };
+    const wins = (slots) => {
+      const off = runs(slots, "off"), may = runs(slots, "maybe");
+      if (!off.length && !may.length) return `<div class="owin">No outages</div>`;
+      return `<div class="owin">${off.length ? `<span style="--c:${C.off}">Outage</span> ${off.join(", ")}` : ""}${off.length && may.length ? " · " : ""}${may.length ? `<span style="--c:${C.maybe}">Possible</span> ${may.join(", ")}` : ""}</div>`;
+    };
+    const when = (t) => {  // "in 2 h 16 min" / "now"
+      const ms = new Date(t).getTime() - Date.now();
+      return ms <= 0 ? "now" : `in ${DUR(ms / 3600000)}`;
+    };
+    const span = (a, b) => `${CLOCK(a)}–${b ? CLOCK(b) : "…"}${new Date(a).toDateString() !== new Date().toDateString() ? " tomorrow" : ""}`;
+    const offA = d.next_off[0], offB = d.next_off[1], mayA = d.next_maybe[0], mayB = d.next_maybe[1];
+    const status = d.now === "off" ? ["No power by the schedule", C.off, offB ? `Back at ${CLOCK(offB)} (${when(offB)})` : ""]
+      : d.now === "maybe" ? ["Outage possible now", C.maybe, mayB ? `Until ${CLOCK(mayB)}` : ""]
+      : d.now === "on" ? ["Power on", "#3ddc84", offA ? `Next outage ${when(offA)} · ${span(offA, offB)}` : mayA ? `Next possible outage ${when(mayA)} · ${span(mayA, mayB)}` : d.announced ? "No outages ahead" : "No outages announced"]
+      : ["No schedule right now", "#9aa6b8", ""];
+    const q = (d.queues || []).map((x) => (d.queue_names || {})[x] || x).join(", ") || "queue unknown";
+    const a = d.address || {};
     let battery = "";
-    const rt = d.runtime, offA = d.next_off[0], offB = d.next_off[1];
+    const rt = d.runtime;
     if (rt && rt.hours != null && offA && offB) {
-      const until = Date.now() + rt.hours * 3600000, end = new Date(offB).getTime(), start = Math.max(new Date(offA).getTime(), Date.now());
-      battery = `<div class="orow"><span>Battery for the next outage</span><b>${until >= end ? "✓ enough" : `✗ about ${DUR((end - until) / 3600000)} short`} (lasts until ${CLOCK(until)}, outage ${CLOCK(start)}–${CLOCK(end)})</b></div>`;
+      const until = Date.now() + rt.hours * 3600000, end = new Date(offB).getTime();
+      battery = `<div class="orow"><span>Battery through the next outage</span><b>${until >= end ? "enough" : `about ${DUR((end - until) / 3600000)} short`} · lasts until ${CLOCK(until)}</b></div>`;
     }
-    const day = (x, label) => `<div class="sub">${label} · ${new Date(x.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} · ${src(x.source)}</div>
-      ${x.slots.length ? this._strip(bands(x.slots), zones, label === "Today") + this._ticks() : `<div class="ch-empty">No schedule</div>`}`;
+    // the week's plan marks half of every day as "possible": it is shown only once DTEK announces outages
+    const day = (x, label) => `<div class="sub">${label}, ${new Date(x.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</div>
+      ${x.slots.length ? bar(x.slots, label === "Today") + this._ticks() + wins(x.slots) : `<div class="owin">No outages announced</div>`}`;
     const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], wd = ((new Date().getDay() + 6) % 7) + 1;
-    const week = Object.keys(d.plan || {}).length ? `<div class="sub">Week's plan for your queue (possible outages)</div>` + Object.entries(d.plan).map(([k, slots]) =>
-      `<div class="wk${+k === wd ? " on" : ""}"><span>${names[+k - 1] || k}</span><div>${this._strip(bands(slots), zones, false)}</div></div>`).join("") + this._ticks() : "";
-    const legend = `<div class="legend">${["on", "off", "maybe"].map((k) => `<span style="--c:${ST[k][1]}">${ST[k][0]}</span>`).join("")}</div>`;
-    return `<div class="ostat"><span class="opill" style="--o:${now[1]}">${now[0]}</span><span>${ESC([a.city, a.street, a.house].filter(Boolean).join(", "))} · <b>${ESC(q)}</b></span></div>
+    const week = d.announced && Object.keys(d.plan || {}).length ? `<div class="sub">Week's plan for ${ESC(q)}</div><div class="owk">` + Object.entries(d.plan).map(([k, slots]) =>
+      `<span class="${+k === wd ? "on" : ""}">${names[+k - 1] || k}</span>${bar(slots, false)}`).join("") + `<span></span>${this._ticks()}</div>` : "";
+    const legend = `<div class="legend"><span style="--c:${C.off}">Outage</span><span style="--c:${C.maybe}">Outage possible</span><span style="--c:#3ddc84">Power on</span></div>`;
+    return `<div class="ocard" style="--o:${status[1]}"><div class="odot"></div><div><b>${status[0]}</b>${status[2] ? `<small>${status[2]}</small>` : ""}</div></div>
+      <div class="oaddr">${ESC([a.city, a.street, a.house].filter(Boolean).join(", "))} · <b>${ESC(q)}</b></div>
       ${d.blocked ? `<div class="tipwarn">The DTEK site answered with its bot check; showing the last schedule (updated ${ESC(d.updated || "?")}).</div>` : ""}
       ${d.outage && d.outage.type ? `<div class="tipwarn">Outage at your address now: ${ESC(d.outage.sub_type || d.outage.type)} ${ESC(d.outage.start_date || "")} – ${ESC(d.outage.end_date || "")}</div>` : ""}
-      <div class="orow"><span>Next outage</span><b>${span(offA, offB) || "none announced"}</b></div>
-      <div class="orow"><span>Next possible outage</span><b>${span(d.next_maybe[0], d.next_maybe[1]) || "none"}</b></div>
       ${battery}
-      ${d.days.map((x, i) => day(x, i ? "Tomorrow" : "Today")).join("")}${week}${legend}
-      <div class="tp-hint">${ESC(d.region)} · DTEK updated ${ESC(d.updated || "?")} · times are Ukrainian time · <a href="${ESC(d.site)}/ua/shutdowns" target="_blank" rel="noreferrer">DTEK site</a></div>`;
+      ${d.announced ? d.days.map((x, i) => day(x, i ? "Tomorrow" : "Today")).join("") + week + legend
+        : `<div class="owin">DTEK has not announced outages for today or tomorrow. The schedule appears here as soon as it does.</div>`}
+      <div class="tp-hint">${ESC(d.region)} · DTEK updated ${ESC(d.updated || "?")} · Ukrainian time · <a href="${ESC(d.site)}/ua/shutdowns" target="_blank" rel="noreferrer">DTEK site</a></div>`;
   }
 
   _header(tabbed) {

@@ -136,7 +136,7 @@ For homes on the grids of DTEK Odesa, DTEK Dnipro, DTEK Kyiv Electric Networks a
 **Configure → Power outage schedule (DTEK)** on the integration: pick the grid company, then your settlement,
 street and house from DTEK's own lists. The **Outages** tab (and the `felicity-outages-card` widget) then shows:
 - your queue (черга) and whether there is power by the schedule right now;
-- today and tomorrow: the schedule DTEK announced, or the week's plan (where outages are only *possible*);
+- today and tomorrow as DTEK announced them; with nothing announced it says so (the week's plan, where half of every day is "possible", appears only once outages are announced);
 - the next outage and the next possible one, and whether the battery lasts until the outage ends;
 - the week's plan for your queue.
 
@@ -209,7 +209,7 @@ All of them find their data by themselves; no entity configuration is needed.
 | `…_grid_import_this_month_<zone>`, `…_grid_cost_this_month` | This calendar month so far, today included |
 | `…_saved_this_month`, `…_battery_saved_this_month` | Savings over this month's finished days |
 | `…_battery_runtime` | Hours the battery would carry the home down to the reserve, by your usual use hour by hour |
-| `sensor.power_outages_*` | With the outage schedule set up: `outage_queue`, `power_by_schedule` (on / off / maybe), `next_outage` and its `_end`, `next_possible_outage` and its `_end` |
+| `sensor.power_outages_*` | With the outage schedule set up: `outage_queue`, `power_by_schedule` (on / off / maybe), `next_outage` and its `_end`, `next_possible_outage` and its `_end` (only from schedules DTEK announced) |
 | `…_last_data` | When the cloud received the latest record (diagnostic); the card's *Updated … ago* counts from it |
 | **Number / select / switch controls** | Inverter settings on the device page (risky ones only while *Unlock risky settings* is on) |
 
