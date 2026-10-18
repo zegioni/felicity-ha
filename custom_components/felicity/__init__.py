@@ -7,20 +7,23 @@ from __future__ import annotations
 import hashlib
 import logging
 import pathlib
+from datetime import timedelta
 
 from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_interval
 
 from .api import FelicityClient
 from .const import CONF_OUTLET_LABEL, CONF_OUTLETS, DEFAULT_OUTLET_LABEL, DOMAIN
 from .coordinator import FelicityCoordinator
 from .cost import zone_signature
 from .energy import after_tariff_saved
+from .outages import CONF_OUTAGES, OutageCoordinator
 from .outlets import label_outlets, outlet_entities
 from .tariff import default_for
 from .views import views
@@ -66,6 +69,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             switches, sensors = outlet_entities(coordinator, sn)
             coordinator.outlet_switches += switches
             coordinator.outlet_sensors += sensors
+    coordinator.outages = None
+    if address := entry.options.get(CONF_OUTAGES):
+        outages = OutageCoordinator(hass, entry, address)
+        await outages.async_load()
+        await outages.async_refresh()  # a blocked or slow site must not hold up the inverter: it retries on its own
+        # the current half hour moves on between updates: the outage sensors are re-read every minute
+        @callback
+        def tick(_now) -> None:
+            outages.async_update_listeners()
+        entry.async_on_unload(async_track_time_interval(hass, tick, timedelta(minutes=1)))
+        coordinator.outages = outages
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -83,7 +97,9 @@ async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     or the currency changed; with a reload when zones, the price sensor or the Matter outlets changed."""
     coordinator: FelicityCoordinator = entry.runtime_data
     tariff = entry.options.get("tariff") or coordinator.tariff
-    if bool(entry.options.get(CONF_OUTLETS)) != coordinator.outlets_on or zone_signature(tariff) != zone_signature(coordinator.tariff):
+    outages = coordinator.outages.address if coordinator.outages else None
+    if (bool(entry.options.get(CONF_OUTLETS)) != coordinator.outlets_on or zone_signature(tariff) != zone_signature(coordinator.tariff)
+            or entry.options.get(CONF_OUTAGES) != outages):
         await hass.config_entries.async_reload(entry.entry_id)
         return
     if coordinator.outlets_on:

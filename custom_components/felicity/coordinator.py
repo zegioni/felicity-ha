@@ -98,6 +98,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self._days_store = Store(hass, 1, f"{DOMAIN}.days.{entry.entry_id}")
         self.month: dict[str, dict] = {}           # sn -> this month so far (kept days + today)
         self.backfilling = False
+        self.outages = None  # OutageCoordinator when an address for DTEK outage schedules is set
         self._backfill_at = 0.0
         self._prev: dict[str, dict] = {}           # sn -> yesterday's last figures, until yesterday is kept
         self._fetching: dict[str, asyncio.Task] = {}

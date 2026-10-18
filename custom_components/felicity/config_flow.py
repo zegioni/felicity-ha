@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import FelicityApiError, FelicityAuthError, FelicityClient
 from .const import CONF_OUTLET_LABEL, CONF_OUTLETS, DEFAULT_OUTLET_LABEL, DOMAIN
+from .outages import CONF_OUTAGES, REGIONS, DtekClient, OutageBlocked, OutageError
 from .tariff import DEFAULT, PRESETS, remember, validate_tariff
 
 CONF_ACCEPT = "accept_risk"
@@ -96,7 +97,7 @@ class FelicityOptionsFlow(OptionsFlow):
     """General options and the electricity tariff (the Solar panel's Tariff tab edits the same tariff, with more comfort)."""
 
     async def async_step_init(self, user_input=None):
-        return self.async_show_menu(step_id="init", menu_options=["general", "tariff"])
+        return self.async_show_menu(step_id="init", menu_options=["general", "tariff", "outages"])
 
     async def async_step_general(self, user_input=None):
         if user_input is not None:
@@ -179,3 +180,84 @@ class FelicityOptionsFlow(OptionsFlow):
             schema[vol.Optional(f"z{i}_hours", default=ranges_to_text(z["ranges"]))] = str
         return self.async_show_form(step_id="zones", data_schema=vol.Schema(schema), errors=errors,
                                     description_placeholders={"currency": cur_name, "error": err_text})
+
+    # ---- power outage schedules (DTEK) ----
+
+    @staticmethod
+    def _pick(options: list[str]) -> selector.SelectSelector:
+        """A searchable list (typing filters it)."""
+        return selector.SelectSelector(selector.SelectSelectorConfig(
+            options=options, mode=selector.SelectSelectorMode.DROPDOWN, custom_value=True, sort=False))
+
+    async def async_step_outages(self, user_input=None):
+        """Region first: the address book comes from that DTEK site."""
+        cur = self.config_entry.options.get(CONF_OUTAGES) or {}
+        errors = {}
+        if user_input is not None:
+            if user_input["region"] == "off":
+                return self.async_create_entry(data={k: v for k, v in self.config_entry.options.items() if k != CONF_OUTAGES})
+            self._outage = {"region": user_input["region"]}
+            self._dtek = DtekClient(self.hass, user_input["region"])
+            try:
+                self._streets = (await self._dtek.page())["streets"]
+                return await self.async_step_outages_city()
+            except OutageBlocked:
+                errors["base"] = "outages_blocked"
+            except OutageError:
+                errors["base"] = "outages_cannot_connect"
+        options = [selector.SelectOptionDict(value="off", label="Off")] + [
+            selector.SelectOptionDict(value=k, label=name) for k, (name, _) in REGIONS.items()]
+        return self.async_show_form(step_id="outages", errors=errors, data_schema=vol.Schema({
+            vol.Required("region", default=cur.get("region", "off")): selector.SelectSelector(
+                selector.SelectSelectorConfig(options=options, mode=selector.SelectSelectorMode.LIST))}))
+
+    async def async_step_outages_city(self, user_input=None):
+        cur = self.config_entry.options.get(CONF_OUTAGES) or {}
+        errors = {}
+        if user_input is not None:
+            if user_input["city"] in self._streets:
+                self._outage["city"] = user_input["city"]
+                return await self.async_step_outages_street()
+            errors["city"] = "outages_unknown"
+        cities = sorted(self._streets, key=lambda c: (not c.startswith("м."), c.lower()))  # towns (м.) first
+        default = cur.get("city") if cur.get("city") in self._streets else vol.UNDEFINED
+        return self.async_show_form(step_id="outages_city", errors=errors, data_schema=vol.Schema({
+            vol.Required("city", default=default): self._pick(cities)}))
+
+    async def async_step_outages_street(self, user_input=None):
+        cur = self.config_entry.options.get(CONF_OUTAGES) or {}
+        streets = self._streets[self._outage["city"]]
+        errors = {}
+        if user_input is not None:
+            if user_input["street"] in streets:
+                self._outage["street"] = user_input["street"]
+                try:
+                    self._houses = await self._dtek.houses(self._outage["city"], self._outage["street"])
+                    return await self.async_step_outages_house()
+                except OutageBlocked:
+                    errors["base"] = "outages_blocked"
+                except OutageError:
+                    errors["base"] = "outages_cannot_connect"
+            else:
+                errors["street"] = "outages_unknown"
+        default = cur.get("street") if cur.get("street") in streets else vol.UNDEFINED
+        return self.async_show_form(step_id="outages_street", errors=errors,
+                                    description_placeholders={"city": self._outage["city"]}, data_schema=vol.Schema({
+            vol.Required("street", default=default): self._pick(sorted(streets, key=str.lower))}))
+
+    async def async_step_outages_house(self, user_input=None):
+        cur = self.config_entry.options.get(CONF_OUTAGES) or {}
+        errors = {}
+        if user_input is not None:
+            if user_input["house"] in self._houses:
+                address = {**self._outage, "house": user_input["house"]}
+                return self.async_create_entry(data={**self.config_entry.options, CONF_OUTAGES: address})
+            errors["house"] = "outages_unknown"
+        def natural(h):  # 2, 3/5, 10, 10А ...
+            m = re.match(r"(\d+)(.*)", h)
+            return (int(m.group(1)), m.group(2)) if m else (10 ** 6, h)
+        houses = sorted(self._houses, key=natural)
+        default = cur.get("house") if cur.get("house") in self._houses else vol.UNDEFINED
+        return self.async_show_form(step_id="outages_house", errors=errors,
+                                    description_placeholders={"street": self._outage["street"]}, data_schema=vol.Schema({
+            vol.Required("house", default=default): self._pick(houses)}))

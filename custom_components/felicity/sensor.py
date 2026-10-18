@@ -18,6 +18,7 @@ from .api import history_time
 from .const import DOMAIN
 from .coordinator import FelicityCoordinator
 from .cost import cost_entities
+from .outages import outage_entities
 from .settings import ECO_RULES, SKIP, display, eco_rule_summary, is_risky, name_of, placement, spec, unit_of
 
 P, E, V, A, T = SensorDeviceClass.POWER, SensorDeviceClass.ENERGY, SensorDeviceClass.VOLTAGE, SensorDeviceClass.CURRENT, SensorDeviceClass.TEMPERATURE
@@ -151,6 +152,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         entities += [FelicitySettingSensor(coordinator, sn, k) for k, x in (coordinator.settings.get(sn) or {}).items()
                      if k not in SKIP and (x or k not in ECO_RULES)]
     entities += [FelicityEventSensor(coordinator, sn) for sn in coordinator.inverters]
+    if coordinator.outages:
+        entities += outage_entities(coordinator.outages)
     async_add_entities(entities + coordinator.outlet_sensors + cost_entities(hass, entry, coordinator))
 
 

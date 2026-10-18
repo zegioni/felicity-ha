@@ -109,7 +109,7 @@ const FIELDS = {
 };
 // tabs of the full card: [id, label, sections]
 const VIEWS = [["overview", "Overview", ["flow", "day", "all"]], ["charts", "Charts", ["explore"]], ["settings", "Settings", ["settings"]],
-  ["work", "Work mode", ["tou"]], ["tariff", "Tariff", ["tariff"]], ["events", "Events", ["events"]]];
+  ["work", "Work mode", ["tou"]], ["tariff", "Tariff", ["tariff"]], ["events", "Events", ["events"]], ["outages", "Outages", ["outages"]]];
 const SETTING_TABS = ["Mode settings", "Basic Setup", "Batt Setting", "Grid Setting", "Gen Setting", "Work Mode Setting",
   "Profession Setting", "Grid Code", "Parallel Setup"];
 // chart explorer: parameters grouped like the Felicity app's data filter. [field, label, unit]
@@ -240,6 +240,9 @@ const STYLES = `<style>
   .hist{background:#ffffff0a;border-radius:16px;padding:10px 10px 8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden}
   .sec{font-size:15px;font-weight:600;margin:2px 2px 8px}
   .sub{font-size:12px;opacity:.65;margin:10px 2px 6px}
+  .ostat{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin-bottom:8px;font-size:12.5px}
+  .opill{padding:4px 10px;border-radius:10px;font-weight:600;font-size:13px;background:var(--o);color:#0d1118}
+  .orow{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin:3px 0}.orow span{opacity:.75}.orow b{text-align:right}
   .evl{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
   .ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-radius:10px;background:#ffb5471a}
   .ev.fault{background:#ff5c5c1f}.evt{font-size:11px;font-weight:600;color:#ffd27a}.ev.fault .evt{color:#ff9a9a}
@@ -1360,6 +1363,50 @@ class FelicityFlowCard extends HTMLElement {
     return `<div class="sub">Last 7 days</div>${last7}<div class="sub">By month</div>${nav}${body}`;
   }
 
+  // DTEK outage schedule of the address (configured in the integration's options)
+  _outages() {
+    if (!this._sn) return "";
+    const key = `o:${this._sn}`;
+    this._get(key, `felicity/outages?sn=${this._sn}`, 120000);
+    const h = this._hist[key], d = h && h.data;
+    if (!h) return `<div class="ch-empty">Loading…</div>`;
+    if (h.error) return `<div class="tipwarn">${ESC(h.error)}</div>`;
+    if (!d.configured) return `<div class="xintro">Shows your queue (черга), today's and tomorrow's outage schedule and the week's plan from the website of your DTEK grid company (Odesa, Dnipro, Kyiv and Kyiv region).<br>
+      Turn it on in <b>Settings → Devices &amp; services → Felicity → Configure → Power outage schedule (DTEK)</b> and pick your address.</div>`;
+    if (!d.days) return `<div class="tipwarn">No schedule yet: ${ESC(d.error || "")}${d.blocked ? " — the DTEK site answered with its bot check; it is retried every 15 minutes." : ""}</div>`;
+    const ST = { on: ["Power on", "#3ddc84"], off: ["Outage", "#ff5c5c"], maybe: ["Outage possible", "#ffb547"], unknown: ["No data", "#555"] };
+    const zones = Object.fromEntries(Object.entries(ST).map(([k, [name, color]]) => [k, { name, color }]));
+    const bands = (slots) => {  // 48 half hours -> [from h, to h, state]
+      const out = [];
+      slots.forEach((s, i) => { const l = out[out.length - 1]; if (l && l[2] === s) l[1] = (i + 1) / 2; else out.push([i / 2, (i + 1) / 2, s]); });
+      return out;
+    };
+    const span = (a, b) => (a ? `${CLOCK(a)}–${b ? CLOCK(b) : "…"}${new Date(a).toDateString() !== new Date().toDateString() ? " tomorrow" : ""}` : null);
+    const q = (d.queues || []).map((x) => (d.queue_names || {})[x] || x).join(", ") || "—";
+    const a = d.address || {}, now = ST[d.now] || ST.unknown;
+    const src = (s) => (s === "fact" ? "announced by DTEK" : s === "plan" ? "week's plan: outages are only possible" : "no schedule");
+    let battery = "";
+    const rt = d.runtime, offA = d.next_off[0], offB = d.next_off[1];
+    if (rt && rt.hours != null && offA && offB) {
+      const until = Date.now() + rt.hours * 3600000, end = new Date(offB).getTime(), start = Math.max(new Date(offA).getTime(), Date.now());
+      battery = `<div class="orow"><span>Battery for the next outage</span><b>${until >= end ? "✓ enough" : `✗ about ${DUR((end - until) / 3600000)} short`} (lasts until ${CLOCK(until)}, outage ${CLOCK(start)}–${CLOCK(end)})</b></div>`;
+    }
+    const day = (x, label) => `<div class="sub">${label} · ${new Date(x.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} · ${src(x.source)}</div>
+      ${x.slots.length ? this._strip(bands(x.slots), zones, label === "Today") + this._ticks() : `<div class="ch-empty">No schedule</div>`}`;
+    const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], wd = ((new Date().getDay() + 6) % 7) + 1;
+    const week = Object.keys(d.plan || {}).length ? `<div class="sub">Week's plan for your queue (possible outages)</div>` + Object.entries(d.plan).map(([k, slots]) =>
+      `<div class="wk${+k === wd ? " on" : ""}"><span>${names[+k - 1] || k}</span><div>${this._strip(bands(slots), zones, false)}</div></div>`).join("") + this._ticks() : "";
+    const legend = `<div class="legend">${["on", "off", "maybe"].map((k) => `<span style="--c:${ST[k][1]}">${ST[k][0]}</span>`).join("")}</div>`;
+    return `<div class="ostat"><span class="opill" style="--o:${now[1]}">${now[0]}</span><span>${ESC([a.city, a.street, a.house].filter(Boolean).join(", "))} · <b>${ESC(q)}</b></span></div>
+      ${d.blocked ? `<div class="tipwarn">The DTEK site answered with its bot check; showing the last schedule (updated ${ESC(d.updated || "?")}).</div>` : ""}
+      ${d.outage && d.outage.type ? `<div class="tipwarn">Outage at your address now: ${ESC(d.outage.sub_type || d.outage.type)} ${ESC(d.outage.start_date || "")} – ${ESC(d.outage.end_date || "")}</div>` : ""}
+      <div class="orow"><span>Next outage</span><b>${span(offA, offB) || "none announced"}</b></div>
+      <div class="orow"><span>Next possible outage</span><b>${span(d.next_maybe[0], d.next_maybe[1]) || "none"}</b></div>
+      ${battery}
+      ${d.days.map((x, i) => day(x, i ? "Tomorrow" : "Today")).join("")}${week}${legend}
+      <div class="tp-hint">${ESC(d.region)} · DTEK updated ${ESC(d.updated || "?")} · times are Ukrainian time · <a href="${ESC(d.site)}/ua/shutdowns" target="_blank" rel="noreferrer">DTEK site</a></div>`;
+  }
+
   _header(tabbed) {
     const label = (sn) => `Inverter …${sn.slice(-4)}`;
     const picker = this._inverters.length > 1 && !this._cfg.sn
@@ -1378,6 +1425,7 @@ class FelicityFlowCard extends HTMLElement {
     const section = (id, title, body) => `<div class="hist ${id}"><div class="sec">${title}</div>${body()}</div>`;
     const bottom = [
       show.includes("events") && section("events", "Alarms and faults", () => this._events()),
+      show.includes("outages") && section("outages", "Power outages", () => this._outages()),
       show.includes("day") && section("day", "Day details", () => this._dayCharts()),
       show.includes("all") && section("all", "History", () => this._allTime()),
       show.includes("explore") && section("explore", "Charts", () => this._explorer()),
@@ -1565,6 +1613,7 @@ const WIDGETS = [
   ["felicity-tou-card", "Felicity: time-of-use schedule", "Work mode schedule timeline and today's result", ["tou"]],
   ["felicity-price-card", "Felicity: electricity price", "Price now, next tariff zone and today's cost by zone", ["price"]],
   ["felicity-tariff-card", "Felicity: tariff", "Tariff editor, cost of any day and Energy dashboard setup", ["tariff"]],
+  ["felicity-outages-card", "Felicity: power outages", "DTEK outage schedule for your address: queue, today, tomorrow and the week's plan, with the battery runtime next to it", ["outages"]],
   ["felicity-events-card", "Felicity: alarms and faults", "The inverter's alarms and faults: the last 7 days and any month (compact: true for the last 7 days only)", ["events"]],
 ];
 for (const [tag, , , show] of WIDGETS) {

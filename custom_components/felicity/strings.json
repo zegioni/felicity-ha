@@ -34,7 +34,8 @@
         "title": "Felicity Inverter Integration Cloud",
         "menu_options": {
           "general": "Matter outlets",
-          "tariff": "Electricity tariff & battery reserve"
+          "tariff": "Electricity tariff & battery reserve",
+          "outages": "Power outage schedule (DTEK)"
         }
       },
       "general": {
@@ -95,10 +96,41 @@
           "z7_hours": "Zone 8 · hours"
         },
         "data_description": {}
+      },
+      "outages": {
+        "title": "Power outage schedule (DTEK)",
+        "description": "Shows your queue (черга), today's and tomorrow's outage schedule and the week's plan for your address, from the website of your DTEK grid company. DTEK has no official API and its site sometimes blocks automated requests: then the last schedule is kept and retried later.\n\nPick Off to turn it off.",
+        "data": {
+          "region": "Grid company"
+        }
+      },
+      "outages_city": {
+        "title": "Settlement",
+        "description": "Type to search; towns (м.) come first.",
+        "data": {
+          "city": "City, town or village"
+        }
+      },
+      "outages_street": {
+        "title": "Street",
+        "description": "Street in {city}.",
+        "data": {
+          "street": "Street"
+        }
+      },
+      "outages_house": {
+        "title": "House",
+        "description": "House on {street}. The list is DTEK's own.",
+        "data": {
+          "house": "House number"
+        }
       }
     },
     "error": {
-      "tariff_invalid": "The tariff is not valid — see the message above."
+      "tariff_invalid": "The tariff is not valid — see the message above.",
+      "outages_blocked": "The DTEK site answered with its bot check instead of the schedule. Try again in a few minutes.",
+      "outages_cannot_connect": "Could not reach the DTEK site.",
+      "outages_unknown": "Pick a value from the list."
     }
   }
 }

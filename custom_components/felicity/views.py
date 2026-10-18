@@ -34,7 +34,7 @@ ENERGY_KEYS = {"gridInput": "grid_import", "feedOutput": "grid_export", "generat
 
 
 def views(hass: HomeAssistant) -> list[HomeAssistantView]:
-    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass), EventsView(hass)]
+    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass), EventsView(hass), OutagesView(hass)]
 
 
 class BadRequest(Exception):
@@ -342,4 +342,23 @@ class EventsView(_View):
             if month > today()[:7]:
                 raise BadRequest("month is in the future")
             return {"sn": sn, "month": month, "events": await coordinator.events_month(sn, month)}
+        return await self._run(answer())
+
+
+class OutagesView(_View):
+    """GET /api/felicity/outages?sn= -> the address's outage schedule (today, tomorrow, the week's plan) and the
+    inverter's battery runtime to compare with it; {"configured": false} when no address is set."""
+
+    url = "/api/felicity/outages"
+    name = "api:felicity:outages"
+
+    async def get(self, request: web.Request) -> web.Response:
+        async def answer():
+            coordinator, sn = pick_inverter(self.hass, request.query.get("sn"))
+            if not coordinator.outages:
+                return {"configured": False}
+            if not coordinator.outages.data:
+                return {"configured": True, "error": coordinator.outages.error or "no data yet",
+                        "blocked": coordinator.outages.blocked}
+            return {"configured": True, **coordinator.outages.view(), "runtime": coordinator.runtime_now(sn)}
         return await self._run(answer())

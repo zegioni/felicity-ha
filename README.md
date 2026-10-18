@@ -53,8 +53,9 @@ It is built and used on a real home system: an **IVAM6048** inverter with a **31
 | 🛠 **All inverter settings** | Laid out like the Felicity app and editable, checked against the inverter's own limits; risky ones need a second confirmation |
 | 🕑 **Work mode** | The time-of-use schedule on a 24-hour timeline, over your tariff zones, with a hint when grid charging runs in an expensive zone |
 | 📈 **Charts** | Six day charts (power, solar, grid with tariff zones, battery, panel voltage, grid voltage with blackouts), history by day and month, and a chart explorer with diagnostic presets like the Felicity data filter |
+| 🔌 **Power outage schedule (Ukraine, DTEK)** | Your queue (черга), today's and tomorrow's outages and the week's plan for your address, with the battery runtime next to the next outage (optional) |
 | 🍏 **Matter plugs** | Optional Home / Battery / Grid plugs with power and energy, for Apple Home and other Matter controllers (via a Matter bridge) |
-| 📱 **Made for phones** | A "Solar" sidebar panel and eight dashboard widgets that work at 390 px; dark theme, no horizontal scrolling |
+| 📱 **Made for phones** | A "Solar" sidebar panel and ten dashboard widgets that work at 390 px; dark theme, no horizontal scrolling |
 
 ## A closer look
 
@@ -127,6 +128,25 @@ The **Solar** panel appears in the sidebar, and the cards appear in the dashboar
 - **Tariff:** open **Solar → Tariff**, pick a template or set your zones, and press **Save**. The first save also sets up the Energy dashboard, if it is empty. You can also use **Configure → Electricity tariff** on the integration.
 - **Battery reserve:** empty means the inverter's own *Low Batt* level (IVAM) or off-grid discharge depth (IVGM).
 - **Matter plugs:** see [Matter plugs (Apple Home)](#matter-plugs-apple-home) below.
+- **Power outage schedule (DTEK):** see [Power outage schedule](#power-outage-schedule-dtek-ukraine) below.
+
+### Power outage schedule (DTEK, Ukraine)
+
+For homes on the grids of DTEK Odesa, DTEK Dnipro, DTEK Kyiv Electric Networks and DTEK Kyiv Regional Grids.
+**Configure → Power outage schedule (DTEK)** on the integration: pick the grid company, then your settlement,
+street and house from DTEK's own lists. The **Outages** tab (and the `felicity-outages-card` widget) then shows:
+- your queue (черга) and whether there is power by the schedule right now;
+- today and tomorrow: the schedule DTEK announced, or the week's plan (where outages are only *possible*);
+- the next outage and the next possible one, and whether the battery lasts until the outage ends;
+- the week's plan for your queue.
+
+Good to know:
+- DTEK has no public API: the data comes from the same requests its website makes. When DTEK changes its site,
+  this can stop working until the integration is updated.
+- The site has a bot filter that now and then answers with a check instead of the data. The last schedule is then
+  kept (also over restarts) and retried; the tab says so. It asks gently: whether the schedule changed every 15
+  minutes (a small request), the whole page every 6 hours, the house's queue once a day.
+- Times are Ukrainian time. Choose **Off** in the same place to turn it off.
 
 ### Matter plugs (Apple Home)
 
@@ -172,6 +192,7 @@ All of them find their data by themselves; no entity configuration is needed.
 | `felicity-tou-card` | The time-of-use schedule |
 | `felicity-price-card` | Price now, next zone, today's cost by zone |
 | `felicity-tariff-card` | The tariff editor, cost by day and by month, Energy dashboard set-up |
+| `felicity-outages-card` | DTEK outage schedule for your address (when set up) |
 | `felicity-events-card` | The inverter's alarms and faults: the last 7 days and any earlier month (`compact: true` shows only the last 7 days) |
 
 ### Entities
@@ -188,6 +209,7 @@ All of them find their data by themselves; no entity configuration is needed.
 | `…_grid_import_this_month_<zone>`, `…_grid_cost_this_month` | This calendar month so far, today included |
 | `…_saved_this_month`, `…_battery_saved_this_month` | Savings over this month's finished days |
 | `…_battery_runtime` | Hours the battery would carry the home down to the reserve, by your usual use hour by hour |
+| `sensor.power_outages_*` | With the outage schedule set up: `outage_queue`, `power_by_schedule` (on / off / maybe), `next_outage` and its `_end`, `next_possible_outage` and its `_end` |
 | `…_last_data` | When the cloud received the latest record (diagnostic); the card's *Updated … ago* counts from it |
 | **Number / select / switch controls** | Inverter settings on the device page (risky ones only while *Unlock risky settings* is on) |
 
