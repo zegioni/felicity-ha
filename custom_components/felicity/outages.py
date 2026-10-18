@@ -7,6 +7,7 @@ announced schedule for today and tomorrow, and asks /ua/ajax for the houses of a
 filter (Incapsula) that sometimes answers with a challenge instead: then the last data is kept and retried later."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -70,6 +71,17 @@ class DtekClient:
         self.site = REGIONS[region][1]
         self._session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
         self._csrf: str | None = None
+
+    async def page_retrying(self, tries: int = 3) -> dict:
+        """page(), tried again a few seconds later when the bot filter answers (it lets most second tries through)."""
+        for n in range(tries):
+            try:
+                return await self.page()
+            except OutageBlocked:
+                if n == tries - 1:
+                    raise
+                await asyncio.sleep(4 * (n + 1))
+        raise OutageBlocked(self.site)
 
     async def page(self) -> dict:
         """{"streets": {city: [street]}, "preset": week plan, "fact": announced days} from the shutdowns page."""
@@ -209,7 +221,7 @@ class OutageCoordinator(DataUpdateCoordinator[dict]):
         s, now = self._saved, time.time()
         try:
             if not s.get("preset") or now - s.get("page_at", 0) > PAGE_EVERY:
-                page = await self.client.page()
+                page = await self.client.page_retrying(2)
                 s.update(preset=page["preset"], fact=page["fact"], page_at=now)
             elif changed := await self.client.check((s.get("fact") or {}).get("update") or ""):
                 s.update(changed)

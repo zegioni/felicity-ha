@@ -197,9 +197,12 @@ class FelicityOptionsFlow(OptionsFlow):
             if user_input["region"] == "off":
                 return self.async_create_entry(data={k: v for k, v in self.config_entry.options.items() if k != CONF_OUTAGES})
             self._outage = {"region": user_input["region"]}
-            self._dtek = DtekClient(self.hass, user_input["region"])
+            # the integration's own session has passed the site's bot filter already: a new one is checked more often
+            running = getattr(getattr(self.config_entry, "runtime_data", None), "outages", None)
+            same = running and running.address.get("region") == user_input["region"]
+            self._dtek = running.client if same else DtekClient(self.hass, user_input["region"])
             try:
-                self._streets = (await self._dtek.page())["streets"]
+                self._streets = (await self._dtek.page_retrying())["streets"]
                 return await self.async_step_outages_city()
             except OutageBlocked:
                 errors["base"] = "outages_blocked"
