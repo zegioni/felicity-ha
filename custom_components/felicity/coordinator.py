@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import OrderedDict
 from datetime import date, datetime, timedelta
@@ -20,7 +21,9 @@ from .api import FelicityApiError, FelicityAuthError, FelicityClient, history_ti
 from .const import (CONF_OUTLETS, DOMAIN, ENERGY_INTERVAL_SECONDS, EVENT_TYPE, EVENTS_INTERVAL_SECONDS, SCAN_INTERVAL_SECONDS,
                      SETTINGS_INTERVAL_SECONDS, UPLOAD_SECONDS)
 from .codes import explain
-from .daystats import add_up, battery_runtime, day_totals, hourly_load, zone_split
+from .daystats import add_up, battery_runtime, day_totals, hourly_load, hourly_profile, zone_split
+from .outages import KYIV as KYIV_TZ
+from .planner import System, plan, rules_from_settings
 from .settings import ECO_RULES, is_risky, validate, validate_rule
 from .tariff import Pricer, day_bands, versions, zone_at
 
@@ -577,6 +580,95 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                 past.append(kept["hourly_load"])
         return {**battery_runtime(self._recent.get(sn, []), num("emsSoc"), reserve, self.capacity_kwh(sn),
                                   load if live else None, past=past or None), "reserve_source": source}
+
+    async def plan_now(self, sn: str) -> dict:
+        """Recommended time-of-use rules from now to the end of tomorrow (planner.plan) for this inverter: the home's
+        usual use by hour, its usual solar, the tariff and the announced outages; with the current rules beside it."""
+        live = ((self.data or {}).get(sn) or {}).get("live", {})
+        values, params = self.settings.get(sn) or {}, self.setting_params.get(sn) or {}
+        try:
+            soc = float(live.get("emsSoc"))
+        except (TypeError, ValueError):
+            return {"error": "no battery level yet"}
+        current = rules_from_settings(values)
+        if not current:
+            return {"error": "this inverter has no time-of-use rules set"}
+        past = []
+        for i in range(7, 0, -1):
+            kept = self._kept(sn, (dt_util.now() - timedelta(days=i)).strftime("%Y-%m-%d"))
+            if kept and kept.get("hourly_load"):
+                past.append(kept["hourly_load"])
+        profile = hourly_profile(past + ([self._recent[sn]] if self._recent.get(sn) else []))
+        if not profile:
+            return {"error": "needs a day or two of history to know your usual use"}
+        pv = [[0.0, 0] for _ in range(24)]  # usual solar by hour, from the days already downloaded
+        for key, (_, _, rows) in list(self._history.items()):
+            if key.startswith(f"{sn}:"):
+                for r in rows:
+                    try:
+                        pv[r["_local"].hour][0] += float(r.get("pvTotalPower") or 0) * 1000
+                        pv[r["_local"].hour][1] += 1
+                    except (TypeError, ValueError):
+                        pass
+        pv_w = [w / n if n else 0.0 for w, n in pv]
+
+        def num(key, default):
+            try:
+                return float(values.get(key))
+            except (TypeError, ValueError):
+                return default
+        m = re.search(r"~\s*(\d+)", str((params.get("ecoRule1.power") or {}).get("rang") or ""))
+        power_max = float(m.group(1)) if m else 6000.0
+        system = System(capacity_kwh=self.capacity_kwh(sn), shutdown_soc=num("batteryShutdownSoc", 10.0),
+                        max_discharge_w=min(power_max, num("batteryMaxDischargeCurrent", 120.0) * 51.2))
+        if system.capacity_kwh <= 0:
+            return {"error": "battery capacity unknown"}
+        off = []  # announced outages, as local times
+        if self.outages and self.outages.data:
+            view = self.outages.view()
+            for d in view["days"]:
+                if d["source"] != "fact":
+                    continue
+                start = datetime.fromisoformat(d["date"]).replace(tzinfo=KYIV_TZ)
+                for i, s in enumerate(d["slots"]):
+                    if s == "off":
+                        off.append(dt_util.as_local(start + timedelta(minutes=30 * i)))
+        now = dt_util.now()
+        t = now.replace(minute=30 * (now.minute // 30), second=0, microsecond=0)
+        end = (now + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
+        flat = self.price_now()
+
+        def price(when):
+            z = zone_at(self.tariff, when)
+            return z["price"] if z else flat
+        steps, prices, outages = [], [], []
+        while t < end:
+            down = any(o <= t < o + timedelta(minutes=30) for o in off)
+            if down and (not outages or outages[-1][1] != len(steps)):
+                outages.append([len(steps), len(steps) + 1])
+            elif down:
+                outages[-1][1] += 1
+            steps.append((t.hour + t.minute / 60, profile[t.hour], pv_w[t.hour], not down, 0.5))
+            prices.append(price(t))
+            t += timedelta(minutes=30)
+        tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_prices = [price(tomorrow + timedelta(minutes=30 * i)) for i in range(48)]
+        charge_w = next((r.power for r in current if r.grid_charge and r.power), 2000.0)
+        reserve = self.reserve(sn)[0]
+        result = await self.hass.async_add_executor_job(lambda: plan(
+            start_soc=soc, steps=steps, prices=prices, day_prices=day_prices, current=current, system=system,
+            reserve=reserve, charge_w=charge_w, power_max=power_max,
+            max_rules=sum(1 for k in values if k.startswith("ecoRule") and k[7:].isdigit()) or len(current),
+            outages=[tuple(o) for o in outages]))
+        result.update(soc=soc, reserve=reserve, currency=self.tariff.get("currency"), capacity_kwh=system.capacity_kwh, power_max=power_max,
+                      start=steps[0][0] if steps else None, outages=[
+                          {"start": (now.replace(minute=30 * (now.minute // 30), second=0, microsecond=0)
+                                     + timedelta(minutes=30 * a)).isoformat(),
+                           "end": (now.replace(minute=30 * (now.minute // 30), second=0, microsecond=0)
+                                   + timedelta(minutes=30 * b)).isoformat()} for a, b in outages])
+        result["current"].pop("soc", None)
+        result["best"].pop("soc", None)
+        return result
 
     async def set_tariff(self, tariff: dict) -> None:
         """Use a newly saved tariff right away (called by the options update listener)."""

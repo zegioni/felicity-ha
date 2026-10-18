@@ -34,7 +34,7 @@ ENERGY_KEYS = {"gridInput": "grid_import", "feedOutput": "grid_export", "generat
 
 
 def views(hass: HomeAssistant) -> list[HomeAssistantView]:
-    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass), EventsView(hass), OutagesView(hass)]
+    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass), EventsView(hass), OutagesView(hass), PlanView(hass)]
 
 
 class BadRequest(Exception):
@@ -361,4 +361,18 @@ class OutagesView(_View):
                 return {"configured": True, "error": coordinator.outages.error or "no data yet",
                         "blocked": coordinator.outages.blocked}
             return {"configured": True, **coordinator.outages.view(), "runtime": coordinator.runtime_now(sn)}
+        return await self._run(answer())
+
+
+class PlanView(_View):
+    """GET /api/felicity/plan?sn= -> recommended time-of-use rules up to the end of tomorrow, with the current rules
+    simulated beside them (cost, the lowest battery level, whether announced outages are carried)."""
+
+    url = "/api/felicity/plan"
+    name = "api:felicity:plan"
+
+    async def get(self, request: web.Request) -> web.Response:
+        async def answer():
+            coordinator, sn = pick_inverter(self.hass, request.query.get("sn"))
+            return await coordinator.plan_now(sn)
         return await self._run(answer())

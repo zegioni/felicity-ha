@@ -1377,6 +1377,33 @@ class FelicityFlowCard extends HTMLElement {
     return `<div class="sub">Last 7 days</div>${last7}<div class="sub">By month</div>${nav}${body}`;
   }
 
+  // the planner's advice: the cheapest daily rules that still carry announced outages, next to the current ones
+  _plan() {
+    if (!this._sn) return "";
+    const key = `plan:${this._sn}`;
+    this._get(key, `felicity/plan?sn=${this._sn}`, 600000);
+    const h = this._hist[key], p = h && h.data;
+    if (!h) return `<div class="ch-empty">Working it out…</div>`;
+    if (h.error || p.error) return `<div class="onote">${ESC(h.error || p.error)}</div>`;
+    const cur = CUR[p.currency] || p.currency || "", money = (x) => `${(+x).toFixed(2)} ${cur}`;
+    const outs = (p.outages || []).map((o, i) => `${CLOCK(o.start)}–${CLOCK(o.end)}${new Date(o.start).toDateString() !== new Date().toDateString() ? " tomorrow" : ""} (needs ~${(p.outage_kwh || [])[i] ?? "?"} kWh)`);
+    const outLine = outs.length ? `<div class="orow"><span>Announced outages</span><b>${outs.join(", ")}</b></div>` : "";
+    const row = (r) => `<div class="orow"><span>${ESC(r.startTime)}–${ESC(r.stopTime)}</span><b>${r.gridChangingEnable === "1" ? `charge from grid to ${r.soc}% at ${r.power} W` : `use battery down to ${r.soc}%${+r.power < (p.power_max || 6000) ? ` at up to ${r.power} W` : ""}`}</b></div>`;
+    const status = p.keep
+      ? [p.covered ? "Your schedule fits" : "No schedule carries the outage", p.covered ? "#3ddc84" : "#ff5c5c",
+         p.covered ? (outs.length ? "It carries the announced outages, and nothing cheaper does." : "Nothing cheaper fits your usual use and tariff.") : "Even a full battery would not last; plan for the rest from elsewhere."]
+      : [p.saving > 0 ? `Save about ${money(p.saving)}` : "Change it to carry the outage", p.covered ? "#3ddc84" : "#ffb547",
+         p.saving > 0 ? `up to the end of tomorrow${p.covered ? "" : " (the outage is not fully carried even so)"}` : `about ${money(-p.saving)} more, but the battery lasts through the outage`];
+    return `<div class="obody">
+      <div class="ocard" style="--o:${status[1]}"><div class="odot"></div><div><b>${status[0]}</b><small>${status[2]}</small></div></div>
+      ${outLine}
+      <div class="orow"><span>Current schedule till tomorrow night</span><b>${money(p.current.cost)} · lowest ${p.current.min_soc}%${p.current.short_kwh ? ` · ${p.current.short_kwh} kWh short in the outage` : ""}</b></div>
+      ${p.keep ? "" : `<div class="orow"><span>Recommended</span><b>${money(p.best.cost)} · lowest ${p.best.min_soc}%</b></div>
+      <div class="ogrp"><div class="ohead">Recommended rules</div>${(p.rules || []).map(row).join("")}</div>`}
+      <div class="ofoot">From your usual use hour by hour, your usual solar, the tariff${outs.length ? " and the outages DTEK announced" : ""}, starting at ${p.soc}% with a ${p.reserve}% reserve. Outages are planned with 15% extra use. Time-of-use rules repeat every day: after an outage, set them back. Nothing is changed on the inverter by this.</div>
+    </div>`;
+  }
+
   // DTEK outage schedule of the address (configured in the integration's options)
   _outages() {
     if (!this._sn) return "";
@@ -1467,6 +1494,7 @@ class FelicityFlowCard extends HTMLElement {
       show.includes("explore") && section("explore", "Charts", () => this._explorer()),
       show.includes("settings") && section("settings", "Inverter settings", () => this._settings()),
       show.includes("tou") && section("tou", "Charging schedule", () => this._tou()),
+      show.includes("tou") && section("plan", "Recommended schedule", () => this._plan()),
       show.includes("price") && this._tariffPanel(T, false),
       show.includes("tariff") && this._tariffView(),
     ].filter(Boolean).join("");

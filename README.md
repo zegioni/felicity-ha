@@ -51,7 +51,7 @@ It is built and used on a real home system: an **IVAM6048** inverter with a **31
 | 💸 **Tariffs and real costs** | Ukrainian 1/2/3-zone presets (to the kopeck: 6.48 / 4.32 / 1.728 ₴), Spain 2.0TD, UK Economy 7, your own zones or a dynamic price (Nord Pool, ENTSO-E, Tibber…). Grid import and cost per zone for today, yesterday or any month, to check against the bill, and what the battery saved |
 | 📊 **Energy dashboard, set up for you** | One grid connection per tariff zone with its price, solar, battery with SOC and live power flows, kept in step with your tariff |
 | 🛠 **All inverter settings** | Laid out like the Felicity app and editable, checked against the inverter's own limits; risky ones need a second confirmation |
-| 🕑 **Work mode** | The time-of-use schedule on a 24-hour timeline, over your tariff zones, with a hint when grid charging runs in an expensive zone |
+| 🕑 **Work mode** | The time-of-use schedule on a 24-hour timeline, over your tariff zones, with a hint when grid charging runs in an expensive zone; a recommended schedule that is cheaper for your usual use and tariff and still carries announced outages |
 | 📈 **Charts** | Six day charts (power, solar, grid with tariff zones, battery, panel voltage, grid voltage with blackouts), history by day and month, and a chart explorer with diagnostic presets like the Felicity data filter |
 | 🔌 **Power outage schedule (Ukraine, DTEK)** | Your queue (черга), today's and tomorrow's outages and the week's plan for your address, with the battery runtime next to the next outage (optional) |
 | 🍏 **Matter plugs** | Optional Home / Battery / Grid plugs with power and energy, for Apple Home and other Matter controllers (via a Matter bridge) |
@@ -94,6 +94,15 @@ The time-of-use rules from the inverter, drawn over the tariff zones and today's
 charges from the grid during a dearer zone, the card says so and names the cheapest one.
 
 <img src="docs/images/work-mode.png" alt="Work mode: charging schedule over tariff zones and today's result" width="100%">
+
+### Recommended schedule
+
+Under the schedule, the **Work mode** tab suggests the cheapest daily time-of-use rules up to the end of tomorrow:
+charge from the grid in the cheapest zone up to a level, let the battery carry the home down to a floor in the
+other zones, and, when DTEK announced an outage, keep enough charge before it (planned with 15 % extra use).
+It simulates the battery from your usual use hour by hour, your usual solar and your tariff; replayed over 11 real
+days the simulation followed the battery level within 1.4 % and the grid import within 2.4 %. It only advises:
+nothing is written to the inverter. Time-of-use rules repeat every day, so set them back after an outage.
 
 ### Settings
 
