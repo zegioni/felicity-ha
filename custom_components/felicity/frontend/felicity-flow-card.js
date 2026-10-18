@@ -240,17 +240,23 @@ const STYLES = `<style>
   .hist{background:#ffffff0a;border-radius:16px;padding:10px 10px 8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden}
   .sec{font-size:15px;font-weight:600;margin:2px 2px 8px}
   .sub{font-size:12px;opacity:.65;margin:10px 2px 6px}
-  .ocard{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:color-mix(in srgb,var(--o) 14%,transparent);margin-bottom:10px}
-  .odot{width:12px;height:12px;border-radius:50%;flex:none;background:var(--o);box-shadow:0 0 0 4px color-mix(in srgb,var(--o) 25%,transparent)}
-  .ocard b{display:block;font-size:17px}.ocard small{display:block;font-size:12.5px;opacity:.8;margin-top:2px}
-  .oaddr{font-size:12px;opacity:.65;margin:-4px 2px 10px}.oaddr b{opacity:1;color:#e9eef7}
-  .orow{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin:3px 2px}.orow span{opacity:.7}.orow b{text-align:right;font-weight:600}
-  .oday{position:relative;display:grid;grid-template-columns:repeat(48,1fr);gap:1px;height:14px;margin-top:4px}
+  .obody{display:flex;flex-direction:column;gap:16px;line-height:1.4}
+  .ogrp{display:flex;flex-direction:column;gap:6px}
+  .ocard{display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:14px;background:color-mix(in srgb,var(--o) 14%,transparent)}
+  .odot{width:12px;height:12px;border-radius:50%;flex:none;background:var(--o);box-shadow:0 0 0 5px color-mix(in srgb,var(--o) 22%,transparent)}
+  .ocard b{display:block;font-size:18px;line-height:1.25}.ocard small{display:block;font-size:13px;opacity:.8;margin-top:4px}
+  .oaddr{font-size:13px;opacity:.7;padding:0 2px}.oaddr b{opacity:1;color:#e9eef7;font-weight:600}
+  .ohead{font-size:13px;font-weight:600;padding:0 2px}.ohead span{font-weight:400;opacity:.6}
+  .orow{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:0 2px}.orow span{opacity:.7}.orow b{text-align:right;font-weight:600}
+  .oday{position:relative;display:grid;grid-template-columns:repeat(48,1fr);gap:1px;height:16px}
   .oday i{background:var(--c);border-radius:1px}.oday i:first-child{border-radius:4px 1px 1px 4px}.oday i:last-of-type{border-radius:1px 4px 4px 1px}
   .oday .nowm{top:-3px;bottom:-3px}
-  .owin{font-size:11.5px;margin:4px 2px 0;opacity:.85}.owin span{color:var(--c);font-weight:600}
-  .owk{display:grid;grid-template-columns:30px 1fr;align-items:center;gap:2px 6px;font-size:10.5px}.owk>span{opacity:.55}.owk>span.on{opacity:1;font-weight:700}
-  .owk .oday{height:10px;margin:0}
+  .ogrp .ticks{margin-top:-2px}
+  .owin{font-size:13px;padding:0 2px;opacity:.9}.owin span{color:var(--c);font-weight:600}
+  .onote{font-size:13px;opacity:.75;padding:0 2px}
+  .owk{display:grid;grid-template-columns:32px 1fr;align-items:center;gap:5px 8px;font-size:11px}.owk>span{opacity:.55}.owk>span.on{opacity:1;font-weight:700}
+  .owk .oday{height:11px}
+  .ofoot{font-size:11.5px;opacity:.55;padding:0 2px;border-top:1px solid #ffffff12;padding-top:10px}.ofoot a{color:inherit}
   .evl{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
   .ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-radius:10px;background:#ffb5471a}
   .ev.fault{background:#ff5c5c1f}.evt{font-size:11px;font-weight:600;color:#ffd27a}.ev.fault .evt{color:#ff9a9a}
@@ -1419,20 +1425,22 @@ class FelicityFlowCard extends HTMLElement {
       battery = `<div class="orow"><span>Battery through the next outage</span><b>${until >= end ? "enough" : `about ${DUR((end - until) / 3600000)} short`} · lasts until ${CLOCK(until)}</b></div>`;
     }
     // the week's plan marks half of every day as "possible": it is shown only once DTEK announces outages
-    const day = (x, label) => `<div class="sub">${label}, ${new Date(x.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</div>
-      ${x.slots.length ? bar(x.slots, label === "Today") + this._ticks() + wins(x.slots) : `<div class="owin">No outages announced</div>`}`;
+    const day = (x, label) => `<div class="ogrp"><div class="ohead">${label} <span>· ${new Date(x.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</span></div>
+      ${x.slots.length ? bar(x.slots, label === "Today") + this._ticks() + wins(x.slots) : `<div class="onote">No outages announced</div>`}</div>`;
     const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], wd = ((new Date().getDay() + 6) % 7) + 1;
-    const week = d.announced && Object.keys(d.plan || {}).length ? `<div class="sub">Week's plan for ${ESC(q)}</div><div class="owk">` + Object.entries(d.plan).map(([k, slots]) =>
-      `<span class="${+k === wd ? "on" : ""}">${names[+k - 1] || k}</span>${bar(slots, false)}`).join("") + `<span></span>${this._ticks()}</div>` : "";
+    const week = d.announced && Object.keys(d.plan || {}).length ? `<div class="ogrp"><div class="ohead">Week's plan <span>· ${ESC(q)}, possible outages</span></div><div class="owk">` + Object.entries(d.plan).map(([k, slots]) =>
+      `<span class="${+k === wd ? "on" : ""}">${names[+k - 1] || k}</span>${bar(slots, false)}`).join("") + `<span></span>${this._ticks()}</div></div>` : "";
     const legend = `<div class="legend"><span style="--c:${C.off}">Outage</span><span style="--c:${C.maybe}">Outage possible</span><span style="--c:#3ddc84">Power on</span></div>`;
-    return `<div class="ocard" style="--o:${status[1]}"><div class="odot"></div><div><b>${status[0]}</b>${status[2] ? `<small>${status[2]}</small>` : ""}</div></div>
-      <div class="oaddr">${ESC([a.city, a.street, a.house].filter(Boolean).join(", "))} · <b>${ESC(q)}</b></div>
+    return `<div class="obody">
+      <div class="ogrp"><div class="ocard" style="--o:${status[1]}"><div class="odot"></div><div><b>${status[0]}</b>${status[2] ? `<small>${status[2]}</small>` : ""}</div></div>
+        <div class="oaddr">${ESC([a.city, a.street, a.house].filter(Boolean).join(", "))} · <b>${ESC(q)}</b></div></div>
       ${d.blocked ? `<div class="tipwarn">The DTEK site answered with its bot check; showing the last schedule (updated ${ESC(d.updated || "?")}).</div>` : ""}
       ${d.outage && d.outage.type ? `<div class="tipwarn">Outage at your address now: ${ESC(d.outage.sub_type || d.outage.type)} ${ESC(d.outage.start_date || "")} – ${ESC(d.outage.end_date || "")}</div>` : ""}
       ${battery}
       ${d.announced ? d.days.map((x, i) => day(x, i ? "Tomorrow" : "Today")).join("") + week + legend
-        : `<div class="owin">DTEK has not announced outages for today or tomorrow. The schedule appears here as soon as it does.</div>`}
-      <div class="tp-hint">${ESC(d.region)} · DTEK updated ${ESC(d.updated || "?")} · Ukrainian time · <a href="${ESC(d.site)}/ua/shutdowns" target="_blank" rel="noreferrer">DTEK site</a></div>`;
+        : `<div class="onote">DTEK has not announced outages for today or tomorrow. The schedule appears here as soon as it does.</div>`}
+      <div class="ofoot">${ESC(d.region)} · DTEK updated ${ESC(d.updated || "?")} · Ukrainian time · <a href="${ESC(d.site)}/ua/shutdowns" target="_blank" rel="noreferrer">DTEK site</a></div>
+    </div>`;
   }
 
   _header(tabbed) {
