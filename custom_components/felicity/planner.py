@@ -128,6 +128,26 @@ def _rules(actions: list[tuple], charge_w: float, power_max: float) -> list[Rule
             for a, b, act in _compress(actions)]
 
 
+def evaluate_rules(start_soc: float, steps: list[tuple], prices: list[float | None], rules: list[Rule], system: System,
+                   reserve: float, outages: list[tuple[int, int]], cheap: float) -> dict:
+    """One set of rules over the coming steps: grid cost, the lowest battery level, kWh missing in announced
+    outages (planned with OUTAGE_MARGIN more use), and a score (cost, the energy left at the end valued at the
+    cheapest price, a heavy penalty for an outage not carried)."""
+    kwh_per_pct = system.capacity_kwh / 100
+    sim = simulate(start_soc, [(h, w * OUTAGE_MARGIN if not up else w, pv, up, dh) for h, w, pv, up, dh in steps],
+                   rules, system)
+    cost = sum(o["grid"] * s[4] / 1000 * (p or 0) for o, s, p in zip(sim, steps, prices))
+    short = 0.0
+    for a, b in outages:
+        low = min((o["soc"] for o in sim[a:b]), default=100)
+        short += max(0.0, reserve - low) * kwh_per_pct
+    end = sim[-1]["soc"] if sim else start_soc
+    value = cost - (end - start_soc) * kwh_per_pct * cheap / system.charge_eff
+    return {"cost": round(cost, 2), "net": round(value, 2), "short_kwh": round(short, 2), "end_soc": round(end, 1),
+            "min_soc": round(min((o["soc"] for o in sim), default=start_soc), 1), "score": value + short * 1000,
+            "soc": [round(o["soc"], 1) for o in sim]}
+
+
 def plan(*, start_soc: float, steps: list[tuple], prices: list[float | None], day_prices: list[float | None],
          current: list[Rule], system: System, reserve: float, charge_w: float, power_max: float, max_rules: int,
          outages: list[tuple[int, int]] | None = None) -> dict:
@@ -143,21 +163,9 @@ def plan(*, start_soc: float, steps: list[tuple], prices: list[float | None], da
         return {"error": "no tariff prices"}
     cheap = min(known)
     levels = sorted({p for p in known if p != cheap})  # the zones the battery should carry, cheapest first
-    margin_steps = [(h, w * OUTAGE_MARGIN if not up else w, pv, up, dh) for h, w, pv, up, dh in steps]
 
     def evaluate(rules: list[Rule]) -> dict:
-        sim = simulate(start_soc, margin_steps, rules, system)
-        cost = sum(o["grid"] * s[4] / 1000 * (p or 0) for o, s, p in zip(sim, steps, prices))
-        short = 0.0
-        for a, b in outages:
-            low = min((o["soc"] for o in sim[a:b]), default=100)
-            short += max(0.0, reserve - low) * kwh_per_pct
-        end = sim[-1]["soc"] if sim else start_soc
-        # energy left at the end is worth what it costs to charge it at the cheapest price
-        value = cost - (end - start_soc) * kwh_per_pct * cheap / system.charge_eff
-        return {"cost": round(cost, 2), "net": round(value, 2), "short_kwh": round(short, 2), "end_soc": round(end, 1),
-                "min_soc": round(min((o["soc"] for o in sim), default=start_soc), 1), "score": value + short * 1000,
-                "soc": [round(o["soc"], 1) for o in sim]}
+        return evaluate_rules(start_soc, steps, prices, rules, system, reserve, outages, cheap)
 
     # one decision per tariff level: the cheapest zone charges to `target`, the others hold their floor;
     # a hold floor runs from the end of the charge window before an outage until the outage starts

@@ -95,6 +95,16 @@ charges from the grid during a dearer zone, the card says so and names the cheap
 
 <img src="docs/images/work-mode.png" alt="Work mode: charging schedule over tariff zones and today's result" width="100%">
 
+### Saved schedules
+
+Keep several time-of-use schedules and switch between them, e.g. one for a stable grid and one that keeps the
+battery full for outages. **Work mode → Saved schedules**: start from the schedule the inverter runs now (or from
+*Keep the battery full*, which charges from the grid to 95 % all day), edit it as in the Felicity app (the same
+periods back to back from 00:00 to 23:59, with Grid, Gen, power and battery %), save it, and send it to the
+inverter when you need it: the whole schedule goes in one command, after a confirmation, checked against the
+inverter's own limits. Each schedule shows what it would cost up to the end of tomorrow and the lowest battery
+level, and the one the inverter runs now is marked.
+
 ### Recommended schedule
 
 Under the schedule, the **Work mode** tab suggests the cheapest daily time-of-use rules up to the end of tomorrow:

@@ -34,7 +34,7 @@ ENERGY_KEYS = {"gridInput": "grid_import", "feedOutput": "grid_export", "generat
 
 
 def views(hass: HomeAssistant) -> list[HomeAssistantView]:
-    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass), EventsView(hass), OutagesView(hass), PlanView(hass)]
+    return [HistoryView(hass), FieldHistoryView(hass), SeriesView(hass), SettingView(hass), TariffView(hass), PeriodView(hass), EventsView(hass), OutagesView(hass), PlanView(hass), ProfilesView(hass)]
 
 
 class BadRequest(Exception):
@@ -375,4 +375,43 @@ class PlanView(_View):
         async def answer():
             coordinator, sn = pick_inverter(self.hass, request.query.get("sn"))
             return await coordinator.plan_now(sn)
+        return await self._run(answer())
+
+
+class ProfilesView(_View):
+    """GET /api/felicity/profiles?sn= -> saved time-of-use schedules, the inverter's own, and an estimate of each.
+    POST {sn, action: save | delete | apply, name, rules, old_name, confirm} (administrators only; apply needs
+    confirm: it replaces the inverter's whole schedule)."""
+
+    url = "/api/felicity/profiles"
+    name = "api:felicity:profiles"
+
+    async def get(self, request: web.Request) -> web.Response:
+        async def answer():
+            coordinator, sn = pick_inverter(self.hass, request.query.get("sn"))
+            return await coordinator.profiles_view(sn)
+        return await self._run(answer())
+
+    async def post(self, request: web.Request) -> web.Response:
+        if not request["hass_user"].is_admin:
+            return self.json({"error": "only administrators can change schedules"}, 403)
+
+        async def answer():
+            body = await json_body(request)
+            coordinator, sn = pick_inverter(self.hass, body.get("sn"))
+            action, rules = body.get("action"), body.get("rules")
+            try:
+                if action == "save":
+                    await coordinator.save_profile(sn, body.get("name"), rules or [], body.get("old_name"))
+                elif action == "delete":
+                    await coordinator.delete_profile(sn, body.get("name"))
+                elif action == "apply":
+                    if not body.get("confirm"):
+                        raise ValueError("confirm sending the schedule to the inverter")
+                    await coordinator.apply_profile(sn, rules or [])
+                else:
+                    raise ValueError("action must be save, delete or apply")
+            except ValueError as err:
+                raise BadRequest(str(err)) from None
+            return await coordinator.profiles_view(sn)
         return await self._run(answer())

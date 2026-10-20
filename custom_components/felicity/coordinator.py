@@ -23,7 +23,8 @@ from .const import (CONF_OUTLETS, DOMAIN, ENERGY_INTERVAL_SECONDS, EVENT_TYPE, E
 from .codes import explain
 from .daystats import add_up, battery_runtime, day_totals, hourly_load, hourly_profile, zone_split
 from .outages import KYIV as KYIV_TZ
-from .planner import System, plan, rules_from_settings
+from .planner import System, evaluate_rules, plan, rules_from_settings
+from . import profiles as prof
 from .settings import ECO_RULES, is_risky, validate, validate_rule
 from .tariff import Pricer, day_bands, versions, zone_at
 
@@ -90,6 +91,8 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         self._event_months_lock = asyncio.Lock()
         self._live_kw: dict[str, bool] = {}        # sn -> the live record's powers come in kW (kept once seen)
         self._settings_lock = asyncio.Lock()
+        self._profiles_store = Store(hass, 1, f"{DOMAIN}.profiles.{entry.entry_id}")
+        self._profiles: dict[str, list[dict]] | None = None  # sn -> [{"name", "rules"}], loaded on first use
         self._history_kw: dict[str, bool] = {}     # sn:day -> False when that day's history powers come in W (scaled)
         self._history: OrderedDict[str, tuple[float, bool, list]] = OrderedDict()
         self._recent: dict[str, list] = {}         # sn -> today's rows, for the battery runtime
@@ -581,9 +584,9 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         return {**battery_runtime(self._recent.get(sn, []), num("emsSoc"), reserve, self.capacity_kwh(sn),
                                   load if live else None, past=past or None), "reserve_source": source}
 
-    async def plan_now(self, sn: str) -> dict:
-        """Recommended time-of-use rules from now to the end of tomorrow (planner.plan) for this inverter: the home's
-        usual use by hour, its usual solar, the tariff and the announced outages; with the current rules beside it."""
+    def _plan_inputs(self, sn: str) -> dict:
+        """What the planner needs from now to the end of tomorrow: the battery level, the home's usual use and solar by
+        hour, prices, announced outages, the inverter's limits and its current rules; {"error"} when not ready."""
         live = ((self.data or {}).get(sn) or {}).get("live", {})
         values, params = self.settings.get(sn) or {}, self.setting_params.get(sn) or {}
         try:
@@ -653,13 +656,24 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             t += timedelta(minutes=30)
         tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         day_prices = [price(tomorrow + timedelta(minutes=30 * i)) for i in range(48)]
-        charge_w = next((r.power for r in current if r.grid_charge and r.power), 2000.0)
-        reserve = self.reserve(sn)[0]
+        return {"soc": soc, "steps": steps, "prices": prices, "day_prices": day_prices, "current": current,
+                "system": system, "reserve": self.reserve(sn)[0], "power_max": power_max, "now": now,
+                "charge_w": next((r.power for r in current if r.grid_charge and r.power), 2000.0),
+                "max_rules": sum(1 for k in values if k.startswith("ecoRule") and k[7:].isdigit()) or len(current),
+                "outages": [tuple(o) for o in outages]}
+
+    async def plan_now(self, sn: str) -> dict:
+        """Recommended time-of-use rules from now to the end of tomorrow (planner.plan) for this inverter: the home's
+        usual use by hour, its usual solar, the tariff and the announced outages; with the current rules beside it."""
+        i = self._plan_inputs(sn)
+        if "error" in i:
+            return i
+        soc, steps, system, reserve, power_max, outages, now = (i[k] for k in (
+            "soc", "steps", "system", "reserve", "power_max", "outages", "now"))
         result = await self.hass.async_add_executor_job(lambda: plan(
-            start_soc=soc, steps=steps, prices=prices, day_prices=day_prices, current=current, system=system,
-            reserve=reserve, charge_w=charge_w, power_max=power_max,
-            max_rules=sum(1 for k in values if k.startswith("ecoRule") and k[7:].isdigit()) or len(current),
-            outages=[tuple(o) for o in outages]))
+            start_soc=soc, steps=steps, prices=i["prices"], day_prices=i["day_prices"], current=i["current"],
+            system=system, reserve=reserve, charge_w=i["charge_w"], power_max=power_max, max_rules=i["max_rules"],
+            outages=outages))
         result.update(soc=soc, reserve=reserve, currency=self.tariff.get("currency"), capacity_kwh=system.capacity_kwh, power_max=power_max,
                       start=steps[0][0] if steps else None, outages=[
                           {"start": (now.replace(minute=30 * (now.minute // 30), second=0, microsecond=0)
@@ -669,6 +683,66 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         result["current"].pop("soc", None)
         result["best"].pop("soc", None)
         return result
+
+    # ---- schedule profiles ----
+
+    async def _profile_list(self, sn: str) -> list[dict]:
+        if self._profiles is None:
+            self._profiles = await self._profiles_store.async_load() or {}
+        return self._profiles.setdefault(sn, [])
+
+    async def profiles_view(self, sn: str) -> dict:
+        """The saved schedules, which one the inverter runs now, and what each costs up to the end of tomorrow."""
+        current = self.settings.get(sn) or {}
+        now_rules = prof.from_inverter(current)
+        items = [dict(p) for p in await self._profile_list(sn)]
+        i = self._plan_inputs(sn)
+        if "error" not in i:
+            cheap = min((p for p in i["day_prices"] if p is not None), default=0)
+
+            def estimate(rules):
+                r = evaluate_rules(i["soc"], i["steps"], i["prices"],
+                                   rules_from_settings(dict(zip(prof.ECO_RULES, rules))), i["system"], i["reserve"],
+                                   i["outages"], cheap)
+                return {k: r[k] for k in ("cost", "min_soc", "short_kwh")}
+            for p in items:
+                p["estimate"] = await self.hass.async_add_executor_job(estimate, p["rules"])
+            now_estimate = await self.hass.async_add_executor_job(estimate, now_rules)
+        else:
+            now_estimate = None
+        for p in items:
+            p["active"] = prof.same(p["rules"], now_rules)
+        return {"sn": sn, "segments": prof.segment_count(current), "modeful": prof.modeful(current),
+                "current": {"rules": now_rules, "estimate": now_estimate}, "profiles": items,
+                "currency": self.tariff.get("currency"), "error": i.get("error")}
+
+    async def save_profile(self, sn: str, name: str, rules: list[dict], old_name: str | None = None) -> None:
+        name = (name or "").strip()[:40]
+        if not name:
+            raise ValueError("give the schedule a name")
+        prof.check(rules, self.settings.get(sn) or {})
+        items = await self._profile_list(sn)
+        items[:] = [p for p in items if p["name"] not in (name, old_name)]
+        items.append({"name": name, "rules": [{f: r.get(f) for f in prof.FIELDS if r.get(f) is not None} for r in rules]})
+        await self._profiles_store.async_save(self._profiles)
+
+    async def delete_profile(self, sn: str, name: str) -> None:
+        items = await self._profile_list(sn)
+        items[:] = [p for p in items if p["name"] != name]
+        await self._profiles_store.async_save(self._profiles)
+
+    async def apply_profile(self, sn: str, rules: list[dict]) -> dict:
+        """Send a whole schedule in one command (as the Felicity app's Send Command), checked against the inverter's
+        own limits first; the settings are read again afterwards."""
+        current = self.settings.get(sn) or {}
+        prof.check(rules, current)
+        params = self.setting_params.get(sn) or {}
+        content = {k: validate_rule(k, r, current.get(k), params) for k, r in zip(prof.ECO_RULES, rules)}
+        _LOGGER.info("Felicity %s: schedule %s", sn, content)
+        res = await self.client.set_settings(sn, content)
+        for delay in (8, 30, 90):
+            self.config_entry.async_create_background_task(self.hass, self._reread(delay), "felicity reread schedule")
+        return {"sent": content, "command": res}
 
     async def set_tariff(self, tariff: dict) -> None:
         """Use a newly saved tariff right away (called by the options update listener)."""

@@ -335,6 +335,13 @@ const STYLES = `<style>
   .tou-t .th{opacity:.55;font-size:11px}.tou-t .tr{border-top:1px solid #ffffff10;font-variant-numeric:tabular-nums}
   .tou-t .tr input,.tou-t .tr select{border-radius:7px;padding:3px 5px;font-size:12px;width:100%}
   .tou-t .tr.changed input,.tou-t .tr.changed select{border-color:#ff9f4388}
+  .pfs{display:flex;flex-wrap:wrap;gap:6px}.pfs button{font-size:13px;padding:7px 12px;border-radius:12px;background:#ffffff0d;color:#e9eef7cc}
+  .pfs button.on{background:#ffffff26;color:#fff;font-weight:600}.pfs button .act{color:#3ddc84;margin-left:4px}
+  .pname{display:flex;gap:8px;align-items:center}.pname input{flex:1;min-width:0;border-radius:9px;padding:7px 10px;font-size:14px}
+  .pbtns{display:flex;flex-wrap:wrap;gap:8px}.pbtns button{font-size:13px;padding:8px 14px;border-radius:10px;background:#ffffff14;color:#e9eef7}
+  .pbtns button.go{background:#ff9f43;color:#0d1118;font-weight:700}.pbtns button.warn{background:#ff5c5c;color:#fff;font-weight:700}
+  .pbtns button.del{background:transparent;color:#ff9a9a}
+  .tou-t .tr input:disabled{opacity:.45}
   /* work mode */
   .tou-head{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;opacity:.85;margin-bottom:8px}
   .seg{fill:#0d1118;font-size:11px;font-weight:700}.now{stroke:#fff;stroke-width:2}
@@ -1377,6 +1384,84 @@ class FelicityFlowCard extends HTMLElement {
     return `<div class="sub">Last 7 days</div>${last7}<div class="sub">By month</div>${nav}${body}`;
   }
 
+  // saved time-of-use schedules: edit as in the Felicity app (the same periods), save, send the whole schedule
+  _profiles() {
+    if (!this._sn) return "";
+    const key = `pf:${this._sn}`;
+    this._get(key, `felicity/profiles?sn=${this._sn}`, 600000);
+    const h = this._hist[key], d = h && h.data;
+    if (!h) return `<div class="ch-empty">Loading…</div>`;
+    if (h.error) return `<div class="tipwarn">${ESC(h.error)}</div>`;
+    const cur = CUR[d.currency] || d.currency || "";
+    const est = (e) => (e ? `till tomorrow night ≈ <b>${(+e.cost).toFixed(2)} ${cur}</b> · lowest ${e.min_soc}%${e.short_kwh ? ` · <span style="color:#ff9a9a">${e.short_kwh} kWh short in the outage</span>` : ""}` : "");
+    const P = this._pf || null;  // the schedule being edited: {name, old, rules}
+    const pills = `<div class="pfs">${d.profiles.map((p) => `<button data-pf-open="${ESC(p.name)}" class="${P && P.old === p.name ? "on" : ""}">${ESC(p.name)}${p.active ? `<span class="act">● on the inverter</span>` : ""}</button>`).join("")}
+      <button data-pf-new="current" class="${P && !P.old ? "on" : ""}">+ New from the current</button>
+      ${d.modeful ? "" : `<button data-pf-new="full">+ Keep the battery full</button>`}</div>`;
+    const nowLine = `<div class="orow"><span>On the inverter now${d.profiles.some((p) => p.active) ? ` (${ESC(d.profiles.find((p) => p.active).name)})` : ""}</span><b>${est(d.current.estimate) || "—"}</b></div>`;
+    if (!P) return `<div class="obody">${pills}${nowLine}<div class="onote">Save the schedule the inverter runs now, or start one that keeps the battery full for outages; edit it like in the Felicity app and send it when you need it.</div></div>`;
+    const n = P.rules.length, modeful = d.modeful;
+    const row = (r, i) => {
+      const cb = (f) => `<label class="tgl sm"><input type="checkbox" data-pf-i="${i}" data-pf-f="${f}"${String(r[f]) === "1" ? " checked" : ""} aria-label="${f}"><span></span></label>`;
+      const mode = modeful ? `<span><select data-pf-i="${i}" data-pf-f="ruleMode">${[["0", "Off"], ["1", "Charge"], ["2", "Discharge"]].map(([v, l]) => `<option value="${v}"${String(r.ruleMode) === v ? " selected" : ""}>${l}</option>`).join("")}</select></span>` : cb("gridChangingEnable") + cb("genChangingEnable");
+      const fixed = (f) => !modeful && ((f === "startTime" && i === 0) || (f === "stopTime" && i === n - 1));
+      const time = (f) => `<input type="text" inputmode="numeric" maxlength="5" placeholder="HH:MM" data-pf-i="${i}" data-pf-f="${f}" value="${ESC(r[f] || "")}"${fixed(f) ? " disabled" : ""}>`;
+      return `<div class="tr">${mode}${time("startTime")}${time("stopTime")}
+        <input type="number" inputmode="numeric" data-pf-i="${i}" data-pf-f="power" value="${ESC(r.power ?? "")}" min="0" step="50">
+        <input type="number" inputmode="numeric" data-pf-i="${i}" data-pf-f="soc" value="${ESC(r.soc ?? "")}" min="0" max="100"><span></span></div>`;
+    };
+    const saved = P.old ? d.profiles.find((p) => p.name === P.old) : null;
+    const sendBtn = UI.pfConfirm ? `<button class="warn" data-pf-act="apply">Replace the inverter's schedule</button>` : `<button class="go" data-pf-act="ask">Send to the inverter</button>`;
+    return `<div class="obody">${pills}
+      <div class="pname"><input data-pf-name value="${ESC(P.name)}" placeholder="Name, e.g. Outages" maxlength="40"></div>
+      <div class="tou-t"><div class="tt"><div class="th">${modeful ? "<span>Mode</span>" : "<span>Grid</span><span>Gen</span>"}<span>Start</span><span>Stop</span><span>Power W</span><span>Batt %</span><span></span></div>${P.rules.map(row).join("")}</div></div>
+      <div class="sread">${modeful ? "" : "Periods follow each other from 00:00 to 23:59, as in the Felicity app: changing where one ends moves where the next starts. "}Power W: the charging power when Grid or Gen charging is on, otherwise the most the battery gives to the home.</div>
+      ${saved ? `<div class="orow"><span>This schedule</span><b>${est(saved.estimate)}</b></div>` : ""}${nowLine}
+      ${UI.pfErr ? `<div class="tipwarn">${ESC(UI.pfErr)}</div>` : ""}${UI.pfMsg ? `<div class="okbox">${ESC(UI.pfMsg)}</div>` : ""}
+      ${UI.pfConfirm ? `<div class="tipwarn">This replaces all ${n} periods on the inverter with this schedule. It takes effect at once and stays until you send another.</div>` : ""}
+      <div class="pbtns"><button data-pf-act="save">Save</button>${sendBtn}${P.old ? `<button class="del" data-pf-act="delete">Delete</button>` : ""}<button data-pf-act="close">Close</button></div>
+    </div>`;
+  }
+
+  _bindProfiles(on) {
+    const data = () => (this._hist[`pf:${this._sn}`] || {}).data;
+    const open = (name, rules, old) => { this._pf = { name, old, rules: rules.map((r) => ({ ...r })) }; UI.pfConfirm = false; UI.pfErr = UI.pfMsg = ""; this._redraw(); };
+    on("[data-pf-open]", "click", (b) => { const p = data().profiles.find((x) => x.name === b.dataset.pfOpen); if (p) open(p.name, p.rules, p.name); });
+    on("[data-pf-new]", "click", (b) => {
+      const d = data(), rules = d.current.rules.map((r) => ({ ...r }));
+      if (b.dataset.pfNew === "full") {  // grid charging all day to 95 % (a full LiFePO4 battery all the time wears it)
+        const charge = rules.find((r) => String(r.gridChangingEnable) === "1");
+        rules.forEach((r) => { r.gridChangingEnable = "1"; r.soc = "95"; r.power = (charge && charge.power) || r.power; });
+        open("Keep the battery full", rules, null);
+      } else open("", rules, null);
+    });
+    on("[data-pf-name]", "input", (el) => { if (this._pf) this._pf.name = el.value; });
+    on("[data-pf-i]", (el) => (el.type === "checkbox" || el.tagName === "SELECT" ? "change" : "input"), (el) => {
+      const P = this._pf; if (!P) return;
+      const i = +el.dataset.pfI, f = el.dataset.pfF, r = P.rules[i];
+      r[f] = el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value;
+      const modeful = (data() || {}).modeful;
+      if (!modeful && f === "stopTime" && P.rules[i + 1]) { P.rules[i + 1].startTime = el.value; const nx = this.shadowRoot.querySelector(`[data-pf-i="${i + 1}"][data-pf-f="startTime"]`); if (nx) nx.value = el.value; }
+      if (!modeful && f === "startTime" && i > 0) { P.rules[i - 1].stopTime = el.value; const pv = this.shadowRoot.querySelector(`[data-pf-i="${i - 1}"][data-pf-f="stopTime"]`); if (pv) pv.value = el.value; }
+      UI.pfConfirm = false;
+    });
+    on("[data-pf-act]", "click", async (b) => {
+      const P = this._pf, act = b.dataset.pfAct, key = `pf:${this._sn}`;
+      if (act === "close") { this._pf = null; UI.pfConfirm = false; UI.pfErr = UI.pfMsg = ""; return this._redraw(); }
+      if (act === "ask") { UI.pfConfirm = true; UI.pfErr = UI.pfMsg = ""; return this._redraw(); }
+      const body = { sn: this._sn, action: act === "apply" ? "apply" : act, name: P.name, old_name: P.old, rules: P.rules, confirm: act === "apply" };
+      try {
+        const r = await this._hass.callApi("POST", "felicity/profiles", body);
+        this._hist[key] = { at: Date.now(), rows: [], data: r };
+        UI.pfErr = ""; UI.pfConfirm = false;
+        if (act === "delete") { this._pf = null; UI.pfMsg = ""; }
+        else if (act === "save") { P.old = P.name.trim(); UI.pfMsg = "Saved."; }
+        else { UI.pfMsg = "Sent. The inverter's schedule is read back in a few seconds."; setTimeout(() => { if (this._hist[key]) this._hist[key].at = 0; this._redraw(); }, 12000); }
+      } catch (e) { UI.pfErr = ERR(e); UI.pfConfirm = false; }
+      this._redraw();
+    });
+  }
+
   // the planner's advice: the cheapest daily rules that still carry announced outages, next to the current ones
   _plan() {
     if (!this._sn) return "";
@@ -1494,6 +1579,7 @@ class FelicityFlowCard extends HTMLElement {
       show.includes("explore") && section("explore", "Charts", () => this._explorer()),
       show.includes("settings") && section("settings", "Inverter settings", () => this._settings()),
       show.includes("tou") && section("tou", "Charging schedule", () => this._tou()),
+      show.includes("tou") && section("profiles", "Saved schedules", () => this._profiles()),
       show.includes("tou") && section("plan", "Recommended schedule", () => this._plan()),
       show.includes("price") && this._tariffPanel(T, false),
       show.includes("tariff") && this._tariffView(),
@@ -1585,6 +1671,7 @@ class FelicityFlowCard extends HTMLElement {
       if (btn) btn.hidden = !(key in this._redits);
     });
     on("[data-rsend]", "click", (b) => this._sendRule(b.dataset.rsend));
+    this._bindProfiles(on);
     on("[data-send]", "click", (b) => this._send(b.dataset.send));
   }
 
