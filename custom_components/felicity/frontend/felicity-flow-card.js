@@ -335,8 +335,12 @@ const STYLES = `<style>
   .tou-t .th{opacity:.55;font-size:11px}.tou-t .tr{border-top:1px solid #ffffff10;font-variant-numeric:tabular-nums}
   .tou-t .tr input,.tou-t .tr select{border-radius:7px;padding:3px 5px;font-size:12px;width:100%}
   .tou-t .tr.changed input,.tou-t .tr.changed select{border-color:#ff9f4388}
-  .pfs{display:flex;flex-wrap:wrap;gap:6px}.pfs button{font-size:13px;padding:7px 12px;border-radius:12px;background:#ffffff0d;color:#e9eef7cc}
-  .pfs button.on{background:#ffffff26;color:#fff;font-weight:600}.pfs button .act{color:#3ddc84;margin-left:4px}
+  .plist{display:flex;flex-direction:column;gap:6px}
+  .prow{display:flex;flex-direction:column;gap:3px;text-align:left;width:100%;padding:10px 12px;border-radius:12px;background:#ffffff0a;border:1px solid transparent;color:#e9eef7}
+  .prow.on{border-color:#ff9f43aa;background:#ff9f4314}.prow>b{display:flex;align-items:center;gap:8px;font-size:14px}.prow small{font-size:12px;opacity:.7}
+  .pact{font-size:11px;font-weight:600;padding:2px 8px;border-radius:8px;background:#3ddc8426;color:#3ddc84}
+  .pnew{align-self:flex-start;font-size:13px;padding:8px 14px;border-radius:10px;background:#ffffff14;color:#e9eef7}
+  .ped .tt{min-width:0}.ped .th,.ped .tr{grid-template-columns:38px 38px minmax(52px,1fr) minmax(52px,1fr) minmax(56px,1fr) 46px;gap:5px}
   .pname{display:flex;gap:8px;align-items:center}.pname input{flex:1;min-width:0;border-radius:9px;padding:7px 10px;font-size:14px}
   .pbtns{display:flex;flex-wrap:wrap;gap:8px}.pbtns button{font-size:13px;padding:8px 14px;border-radius:10px;background:#ffffff14;color:#e9eef7}
   .pbtns button.go{background:#ff9f43;color:#0d1118;font-weight:700}.pbtns button.warn{background:#ff5c5c;color:#fff;font-weight:700}
@@ -1395,11 +1399,12 @@ class FelicityFlowCard extends HTMLElement {
     const cur = CUR[d.currency] || d.currency || "";
     const est = (e) => (e ? `till tomorrow night ≈ <b>${(+e.cost).toFixed(2)} ${cur}</b> · lowest ${e.min_soc}%${e.short_kwh ? ` · <span style="color:#ff9a9a">${e.short_kwh} kWh short in the outage</span>` : ""}` : "");
     const P = this._pf || null;  // the schedule being edited: {name, old, rules}
-    const pills = `<div class="pfs">${d.profiles.map((p) => `<button data-pf-open="${ESC(p.name)}" class="${P && P.old === p.name ? "on" : ""}">${ESC(p.name)}${p.active ? `<span class="act">● on the inverter</span>` : ""}</button>`).join("")}
-      <button data-pf-new="current" class="${P && !P.old ? "on" : ""}">+ New from the current</button>
-      ${d.modeful ? "" : `<button data-pf-new="full">+ Keep the battery full</button>`}</div>`;
-    const nowLine = `<div class="orow"><span>On the inverter now${d.profiles.some((p) => p.active) ? ` (${ESC(d.profiles.find((p) => p.active).name)})` : ""}</span><b>${est(d.current.estimate) || "—"}</b></div>`;
-    if (!P) return `<div class="obody">${pills}${nowLine}<div class="onote">Save the schedule the inverter runs now, or start one that keeps the battery full for outages; edit it like in the Felicity app and send it when you need it.</div></div>`;
+    const active = d.profiles.find((p) => p.active);
+    const list = `<div class="plist">${d.profiles.map((p) => `<button class="prow${P && P.old === p.name ? " on" : ""}" data-pf-open="${ESC(p.name)}">
+        <b>${ESC(p.name)}${p.active ? `<span class="pact">On the inverter</span>` : ""}</b><small>${est(p.estimate)}</small></button>`).join("")}
+      ${active ? "" : `<div class="orow"><span>On the inverter now (not saved)</span><b>${est(d.current.estimate) || "—"}</b></div>`}
+      <button class="pnew" data-pf-new="current">+ New schedule</button></div>`;
+    if (!P) return `<div class="obody">${list}${d.profiles.length ? "" : `<div class="onote">A new schedule starts as a copy of the one the inverter runs now: edit it like in the Felicity app, save it, and send it when you need it (e.g. one that charges to 95 % all day for outages).</div>`}</div>`;
     const n = P.rules.length, modeful = d.modeful;
     const row = (r, i) => {
       const cb = (f) => `<label class="tgl sm"><input type="checkbox" data-pf-i="${i}" data-pf-f="${f}"${String(r[f]) === "1" ? " checked" : ""} aria-label="${f}"><span></span></label>`;
@@ -1408,15 +1413,15 @@ class FelicityFlowCard extends HTMLElement {
       const time = (f) => `<input type="text" inputmode="numeric" maxlength="5" placeholder="HH:MM" data-pf-i="${i}" data-pf-f="${f}" value="${ESC(r[f] || "")}"${fixed(f) ? " disabled" : ""}>`;
       return `<div class="tr">${mode}${time("startTime")}${time("stopTime")}
         <input type="number" inputmode="numeric" data-pf-i="${i}" data-pf-f="power" value="${ESC(r.power ?? "")}" min="0" step="50">
-        <input type="number" inputmode="numeric" data-pf-i="${i}" data-pf-f="soc" value="${ESC(r.soc ?? "")}" min="0" max="100"><span></span></div>`;
+        <input type="number" inputmode="numeric" data-pf-i="${i}" data-pf-f="soc" value="${ESC(r.soc ?? "")}" min="0" max="100"></div>`;
     };
     const saved = P.old ? d.profiles.find((p) => p.name === P.old) : null;
     const sendBtn = UI.pfConfirm ? `<button class="warn" data-pf-act="apply">Replace the inverter's schedule</button>` : `<button class="go" data-pf-act="ask">Send to the inverter</button>`;
-    return `<div class="obody">${pills}
+    return `<div class="obody">${list}
       <div class="pname"><input data-pf-name value="${ESC(P.name)}" placeholder="Name, e.g. Outages" maxlength="40"></div>
-      <div class="tou-t"><div class="tt"><div class="th">${modeful ? "<span>Mode</span>" : "<span>Grid</span><span>Gen</span>"}<span>Start</span><span>Stop</span><span>Power W</span><span>Batt %</span><span></span></div>${P.rules.map(row).join("")}</div></div>
+      <div class="tou-t ped"><div class="tt"><div class="th">${modeful ? "<span>Mode</span>" : "<span>Grid</span><span>Gen</span>"}<span>Start</span><span>Stop</span><span>Power W</span><span>Batt %</span></div>${P.rules.map(row).join("")}</div></div>
       <div class="sread">${modeful ? "" : "Periods follow each other from 00:00 to 23:59, as in the Felicity app: changing where one ends moves where the next starts. "}Power W: the charging power when Grid or Gen charging is on, otherwise the most the battery gives to the home.</div>
-      ${saved ? `<div class="orow"><span>This schedule</span><b>${est(saved.estimate)}</b></div>` : ""}${nowLine}
+      ${saved && !saved.active ? `<div class="orow"><span>On the inverter now${active ? ` (${ESC(active.name)})` : ""}</span><b>${est(d.current.estimate) || "—"}</b></div>` : ""}
       ${UI.pfErr ? `<div class="tipwarn">${ESC(UI.pfErr)}</div>` : ""}${UI.pfMsg ? `<div class="okbox">${ESC(UI.pfMsg)}</div>` : ""}
       ${UI.pfConfirm ? `<div class="tipwarn">This replaces all ${n} periods on the inverter with this schedule. It takes effect at once and stays until you send another.</div>` : ""}
       <div class="pbtns"><button data-pf-act="save">Save</button>${sendBtn}${P.old ? `<button class="del" data-pf-act="delete">Delete</button>` : ""}<button data-pf-act="close">Close</button></div>
@@ -1427,14 +1432,7 @@ class FelicityFlowCard extends HTMLElement {
     const data = () => (this._hist[`pf:${this._sn}`] || {}).data;
     const open = (name, rules, old) => { this._pf = { name, old, rules: rules.map((r) => ({ ...r })) }; UI.pfConfirm = false; UI.pfErr = UI.pfMsg = ""; this._redraw(); };
     on("[data-pf-open]", "click", (b) => { const p = data().profiles.find((x) => x.name === b.dataset.pfOpen); if (p) open(p.name, p.rules, p.name); });
-    on("[data-pf-new]", "click", (b) => {
-      const d = data(), rules = d.current.rules.map((r) => ({ ...r }));
-      if (b.dataset.pfNew === "full") {  // grid charging all day to 95 % (a full LiFePO4 battery all the time wears it)
-        const charge = rules.find((r) => String(r.gridChangingEnable) === "1");
-        rules.forEach((r) => { r.gridChangingEnable = "1"; r.soc = "95"; r.power = (charge && charge.power) || r.power; });
-        open("Keep the battery full", rules, null);
-      } else open("", rules, null);
-    });
+    on("[data-pf-new]", "click", () => open("", data().current.rules, null));
     on("[data-pf-name]", "input", (el) => { if (this._pf) this._pf.name = el.value; });
     on("[data-pf-i]", (el) => (el.type === "checkbox" || el.tagName === "SELECT" ? "change" : "input"), (el) => {
       const P = this._pf; if (!P) return;
