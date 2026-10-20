@@ -1536,7 +1536,8 @@ class FelicityFlowCard extends HTMLElement {
     }
     // the week's plan marks half of every day as "possible": it is shown only once DTEK announces outages
     const day = (x, label) => `<div class="ogrp"><div class="ohead">${label} <span>· ${new Date(x.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</span></div>
-      ${x.slots.length ? bar(x.slots, label === "Today") + this._ticks() + wins(x.slots) : `<div class="onote">No outages announced</div>`}</div>`;
+      ${x.slots.length ? bar(x.slots, label === "Today") + this._ticks() + wins(x.slots)
+        : bar(Array(48).fill("on"), label === "Today") + this._ticks() + `<div class="owin">No outages announced</div>`}</div>`;
     const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], wd = ((new Date().getDay() + 6) % 7) + 1;
     const week = d.announced && Object.keys(d.plan || {}).length ? `<div class="ogrp"><div class="ohead">Week's plan <span>· ${ESC(q)}, possible outages</span></div><div class="owk">` + Object.entries(d.plan).map(([k, slots]) =>
       `<span class="${+k === wd ? "on" : ""}">${names[+k - 1] || k}</span>${bar(slots, false)}`).join("") + `<span></span>${this._ticks()}</div></div>` : "";
@@ -1547,8 +1548,7 @@ class FelicityFlowCard extends HTMLElement {
       ${d.blocked ? `<div class="tipwarn">The DTEK site answered with its bot check; showing the last schedule (updated ${ESC(d.updated || "?")}).</div>` : ""}
       ${d.outage && d.outage.type ? `<div class="tipwarn">Outage at your address now: ${ESC(d.outage.sub_type || d.outage.type)} ${ESC(d.outage.start_date || "")} – ${ESC(d.outage.end_date || "")}</div>` : ""}
       ${battery}
-      ${d.announced ? d.days.map((x, i) => day(x, i ? "Tomorrow" : "Today")).join("") + week + legend
-        : `<div class="onote">DTEK has not announced outages for today or tomorrow. The schedule appears here as soon as it does.</div>`}
+      ${d.days.map((x, i) => day(x, i ? "Tomorrow" : "Today")).join("")}${d.announced ? week + legend : ""}
       <div class="ofoot">${ESC(d.region)} · DTEK last changed the schedule ${ESC(d.updated || "?")} · checked ${d.checked ? CLOCK(d.checked) + (new Date(d.checked).toDateString() !== new Date().toDateString() ? ` ${new Date(d.checked).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : "") : "—"} · Ukrainian time · <a href="${ESC(d.site)}/ua/shutdowns" target="_blank" rel="noreferrer">DTEK site</a></div>
     </div>`;
   }
