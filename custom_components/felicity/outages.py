@@ -231,6 +231,7 @@ class OutageCoordinator(DataUpdateCoordinator[dict]):
                     raise OutageError(f"house {self.address['house']} is not in DTEK's list for this street")
                 s.update(house=houses[self.address["house"]], house_at=now)
             self.blocked, self.error = False, None
+            s["checked_at"] = now  # the last time the site answered (DTEK's own "update" is when it changed the schedule)
             await self._store.async_save({**s, "address": self.address})
         except OutageError as err:
             self.blocked, self.error = isinstance(err, OutageBlocked), str(err)
@@ -245,7 +246,9 @@ class OutageCoordinator(DataUpdateCoordinator[dict]):
         house = s.get("house") or {}
         q = queues_of(house)
         out = schedule(s.get("preset") or {}, s.get("fact") or {}, q[0] if q else None, datetime.now(KYIV))
+        checked = s.get("checked_at")
         out.update(queues=q, address=self.address, region=self.region_name, blocked=self.blocked, error=self.error,
+                   checked=datetime.fromtimestamp(checked, KYIV).isoformat() if checked else None,
                    site=self.client.site,
                    outage={k: house.get(k) for k in ("type", "sub_type", "start_date", "end_date") if house.get(k)})
         return out

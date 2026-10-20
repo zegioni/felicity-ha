@@ -1549,7 +1549,7 @@ class FelicityFlowCard extends HTMLElement {
       ${battery}
       ${d.announced ? d.days.map((x, i) => day(x, i ? "Tomorrow" : "Today")).join("") + week + legend
         : `<div class="onote">DTEK has not announced outages for today or tomorrow. The schedule appears here as soon as it does.</div>`}
-      <div class="ofoot">${ESC(d.region)} · DTEK updated ${ESC(d.updated || "?")} · Ukrainian time · <a href="${ESC(d.site)}/ua/shutdowns" target="_blank" rel="noreferrer">DTEK site</a></div>
+      <div class="ofoot">${ESC(d.region)} · DTEK last changed the schedule ${ESC(d.updated || "?")} · checked ${d.checked ? CLOCK(d.checked) + (new Date(d.checked).toDateString() !== new Date().toDateString() ? ` ${new Date(d.checked).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : "") : "—"} · Ukrainian time · <a href="${ESC(d.site)}/ua/shutdowns" target="_blank" rel="noreferrer">DTEK site</a></div>
     </div>`;
   }
 
