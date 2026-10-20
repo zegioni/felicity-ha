@@ -174,8 +174,8 @@ const STYLES = `<style>
   .title b{font-size:18px;font-weight:600}.title span{font-size:12px;opacity:.6}
   .head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:-4px 0 12px;flex-wrap:wrap}
   .head.mini{margin:-6px 0 6px}
-  .vtabs{display:flex;gap:4px;max-width:100%;overflow-x:auto;scrollbar-width:none;background:#ffffff0d;border-radius:12px;padding:3px}
-  .vtabs button{white-space:nowrap;font-size:13px;font-weight:600;padding:6px 14px;border-radius:9px;color:#e9eef7aa}
+  .vtabs{flex:1 1 100%;display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:3px;background:#ffffff0d;border-radius:12px;padding:3px}
+  .vtabs button{white-space:nowrap;font-size:13px;font-weight:600;padding:7px 6px;border-radius:9px;color:#e9eef7aa;text-align:center}
   .vtabs button.on{background:#ffffff22;color:#fff}
   .invsel span,.invsel select{font-size:12.5px;opacity:.8}.invsel select{padding:4px 8px}
   /* overview: battery box, energy flow, price panel */
