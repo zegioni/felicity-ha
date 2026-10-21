@@ -96,6 +96,19 @@ def text_to_ranges(text: str) -> list:
 class FelicityOptionsFlow(OptionsFlow):
     """General options and the electricity tariff (the Solar panel's Tariff tab edits the same tariff, with more comfort)."""
 
+    _dtek: DtekClient | None = None
+
+    def _close_dtek(self) -> None:
+        """The flow's own DTEK session (not the running one, which it borrows when the region is the same)."""
+        running = getattr(getattr(self.config_entry, "runtime_data", None), "outages", None)
+        if self._dtek and self._dtek is not getattr(running, "client", None):
+            self._dtek.close()
+        self._dtek = None
+
+    @callback
+    def async_remove(self) -> None:
+        self._close_dtek()
+
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(step_id="init", menu_options=["general", "tariff", "outages"])
 
@@ -200,6 +213,7 @@ class FelicityOptionsFlow(OptionsFlow):
             # the integration's own session has passed the site's bot filter already: a new one is checked more often
             running = getattr(getattr(self.config_entry, "runtime_data", None), "outages", None)
             same = running and running.address.get("region") == user_input["region"]
+            self._close_dtek()
             self._dtek = running.client if same else DtekClient(self.hass, user_input["region"])
             try:
                 self._streets = (await self._dtek.page_retrying())["streets"]

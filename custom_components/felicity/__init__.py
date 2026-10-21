@@ -23,7 +23,7 @@ from .const import CONF_OUTLET_LABEL, CONF_OUTLETS, DEFAULT_OUTLET_LABEL, DOMAIN
 from .coordinator import FelicityCoordinator
 from .cost import zone_signature
 from .energy import after_tariff_saved
-from .outages import CONF_OUTAGES, OutageCoordinator
+from .outages import CONF_OUTAGES, OutageCoordinator, async_remove_outages
 from .outlets import label_outlets, outlet_entities
 from .tariff import default_for
 from .views import views
@@ -73,13 +73,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if address := entry.options.get(CONF_OUTAGES):
         outages = OutageCoordinator(hass, entry, address)
         await outages.async_load()
-        await outages.async_refresh()  # a blocked or slow site must not hold up the inverter: it retries on its own
+        entry.async_on_unload(outages.client.close)
+        # a blocked or slow site must not hold up the inverter: the stored schedule shows meanwhile, it retries on its own
+        entry.async_create_background_task(hass, outages.async_refresh(), "felicity outages")
         # the current half hour moves on between updates: the outage sensors are re-read every minute
         @callback
         def tick(_now) -> None:
             outages.async_update_listeners()
         entry.async_on_unload(async_track_time_interval(hass, tick, timedelta(minutes=1)))
         coordinator.outages = outages
+    else:
+        await async_remove_outages(hass, entry)
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -674,6 +674,11 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
             start_soc=soc, steps=steps, prices=i["prices"], day_prices=i["day_prices"], current=i["current"],
             system=system, reserve=reserve, charge_w=i["charge_w"], power_max=power_max, max_rules=i["max_rules"],
             outages=outages))
+        if "error" in result:
+            return result
+        if prof.modeful(self.settings.get(sn) or {}):  # IVGM / T-REX: a rule mode instead of the grid-charging flag
+            for r in result["rules"]:
+                r["ruleMode"] = "1" if r.pop("gridChangingEnable") == "1" else "2"
         result.update(soc=soc, reserve=reserve, currency=self.tariff.get("currency"), capacity_kwh=system.capacity_kwh, power_max=power_max,
                       start=steps[0][0] if steps else None, outages=[
                           {"start": (now.replace(minute=30 * (now.minute // 30), second=0, microsecond=0)
@@ -705,9 +710,10 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
                                    rules_from_settings(dict(zip(prof.ECO_RULES, rules))), i["system"], i["reserve"],
                                    i["outages"], cheap)
                 return {k: r[k] for k in ("cost", "min_soc", "short_kwh")}
-            for p in items:
-                p["estimate"] = await self.hass.async_add_executor_job(estimate, p["rules"])
-            now_estimate = await self.hass.async_add_executor_job(estimate, now_rules)
+            *estimates, now_estimate = await self.hass.async_add_executor_job(
+                lambda: [estimate(r) for r in [*(p["rules"] for p in items), now_rules]])
+            for p, e in zip(items, estimates):
+                p["estimate"] = e
         else:
             now_estimate = None
         for p in items:

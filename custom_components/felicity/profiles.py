@@ -19,9 +19,10 @@ def modeful(current: dict) -> bool:
 
 
 def segment_count(current: dict) -> int:
+    n = sum(1 for k in ECO_RULES if k in current)
     if modeful(current):
-        return sum(1 for k in ECO_RULES if k in current)
-    return SEGMENTS
+        return n
+    return min(n, SEGMENTS) or SEGMENTS
 
 
 def from_inverter(current: dict) -> list[dict]:
@@ -42,6 +43,9 @@ def check(rules: list[dict], current: dict) -> None:
     for i, (a, b) in enumerate(zip(rules, rules[1:]), 1):
         if a.get("stopTime") != b.get("startTime"):
             raise ValueError(f"period {i + 1} must start where period {i} ends ({a.get('stopTime')})")
+    for i, r in enumerate(rules, 1):  # as the inverter checks them (settings.validate_rule)
+        if str(r.get("startTime")) >= str(r.get("stopTime")) and r.get("stopTime") != "00:00":
+            raise ValueError(f"period {i} is empty: its start must be before its stop")
 
 
 def same(a: list[dict], b: list[dict]) -> bool:

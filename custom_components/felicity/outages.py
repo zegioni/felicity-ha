@@ -18,7 +18,8 @@ from zoneinfo import ZoneInfo
 import aiohttp
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.storage import Store
@@ -69,8 +70,13 @@ class DtekClient:
         if region not in REGIONS:
             raise OutageError(f"unknown region {region}")
         self.site = REGIONS[region][1]
+        self._hass = hass
         self._session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
         self._csrf: str | None = None
+
+    @callback
+    def close(self) -> None:
+        self._hass.async_create_task(self._session.close())
 
     async def page_retrying(self, tries: int = 3) -> dict:
         """page(), tried again a few seconds later when the bot filter answers (it lets most second tries through)."""
@@ -211,11 +217,15 @@ class OutageCoordinator(DataUpdateCoordinator[dict]):
         self._saved: dict = {}  # {"preset", "fact", "house", "page_at", "house_at"}
         self.blocked = False
         self.error: str | None = None
+        self._view: tuple | None = None  # (as of, view): the sensors read it several times a minute
 
     async def async_load(self) -> None:
+        """The last stored schedule, shown until the site answers."""
         saved = await self._store.async_load() or {}
         if saved.get("address") == self.address:
             self._saved = saved
+            if saved.get("preset"):
+                self.data = dict(saved)
 
     async def _async_update_data(self) -> dict:
         s, now = self._saved, time.time()
@@ -241,17 +251,30 @@ class OutageCoordinator(DataUpdateCoordinator[dict]):
         return dict(s)
 
     def view(self) -> dict:
-        """The schedule as of now (computed on every read: the current half hour moves on between updates)."""
+        """The schedule as of now (computed again each minute: the current half hour moves on between updates)."""
+        now = datetime.now(KYIV)
+        key = (now.replace(second=0, microsecond=0), id(self.data), self.blocked, self.error)
+        if self._view and self._view[0] == key:
+            return self._view[1]
         s = self.data or {}
         house = s.get("house") or {}
         q = queues_of(house)
-        out = schedule(s.get("preset") or {}, s.get("fact") or {}, q[0] if q else None, datetime.now(KYIV))
+        out = schedule(s.get("preset") or {}, s.get("fact") or {}, q[0] if q else None, now)
         checked = s.get("checked_at")
         out.update(queues=q, address=self.address, region=self.region_name, blocked=self.blocked, error=self.error,
                    checked=datetime.fromtimestamp(checked, KYIV).isoformat() if checked else None,
                    site=self.client.site,
                    outage={k: house.get(k) for k in ("type", "sub_type", "start_date", "end_date") if house.get(k)})
+        self._view = (key, out)
         return out
+
+
+async def async_remove_outages(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Outages turned off: their device (with its sensors) and the stored schedule go."""
+    reg = dr.async_get(hass)
+    if device := reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_outages")}):
+        reg.async_remove_device(device.id)
+    await Store(hass, 1, f"{DOMAIN}.outages.{entry.entry_id}").async_remove()
 
 
 # ---- entities ----

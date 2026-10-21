@@ -196,7 +196,9 @@ def plan(*, start_soc: float, steps: list[tuple], prices: list[float | None], da
         need = reserve + max(sum(s[1] * s[4] for s in steps[a:b]) / 1000 * OUTAGE_MARGIN for a, b in outages) / kwh_per_pct
         starts.append({"target": 100, "floors": {lv: reserve for lv in levels},
                        "hold": min(100, 5 * -(-int(need) // 5)) if hold_slots else None})
-    scored = [(evaluate(_rules(actions(p), charge_w, power_max)), p) for p in starts]
+    scored = [(evaluate(r), p) for p in starts if len(r := _rules(actions(p), charge_w, power_max)) <= max_rules]
+    if not scored:
+        return {"error": "the tariff has more zones than the inverter has time-of-use rules"}
     best, best_p = min(scored, key=lambda x: x[0]["score"])
     for _ in range(3):  # coordinate descent: one decision at a time, a few rounds
         for name in ["target", *[("floor", lv) for lv in levels], *(["hold"] if hold_slots else [])]:
