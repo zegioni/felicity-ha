@@ -3,8 +3,8 @@
 """Home Assistant Energy dashboard set up from the tariff: one grid connection per tariff zone with its price,
 export, solar, battery with SOC, and live power flows.
 
-The sources this integration writes are named "Felicity …" and remembered in the entry's options (OWN: their type and
-energy statistic) when written. They are created when a tariff is first saved (only if the dashboard is empty) and
+The sources this integration writes are named "Felicity …" and remembered in the entry's options (OWN: their type,
+energy statistic and name) when written. They are created when a tariff is first saved (only if the dashboard is empty) and
 rewritten on later saves; only the remembered ones are ever replaced, so sources the user set up by hand (also on
 the sensors this integration makes for the dashboard) and other accounts' sources are never touched."""
 from __future__ import annotations
@@ -18,7 +18,7 @@ from .tariff import DYNAMIC_ZONE
 
 _LOGGER = logging.getLogger(__name__)
 MARK = "Felicity"
-OWN = "energy_sources"  # entry option: [[type, energy statistic], ...] of the sources this entry wrote
+OWN = "energy_sources"  # entry option: [[type, energy statistic, name], ...] of the sources this entry wrote
 
 
 def _entities(hass, entry_id: str) -> tuple[dict[str, str], set[str]]:
@@ -33,7 +33,7 @@ def _entities(hass, entry_id: str) -> tuple[dict[str, str], set[str]]:
 
 
 def _key(src: dict) -> tuple:
-    return src.get("type"), src.get("stat_energy_from")
+    return src.get("type"), src.get("stat_energy_from"), src.get("name")
 
 
 def _written(entry, sources: list[dict], made: set[str]) -> set[tuple]:
@@ -46,26 +46,41 @@ def _written(entry, sources: list[dict], made: set[str]) -> set[tuple]:
     return {_key(s) for s in sources if str(s.get("name", "")).startswith(MARK) and s.get("stat_energy_from") in made}
 
 
-def _sources(coordinator, ids: dict[str, str]) -> list[dict]:
+def _used(sources: list[dict]) -> set[str]:
+    """Statistics these sources use (Home Assistant takes each one once)."""
+    out = set()
+    for s in sources:
+        out |= {s.get(k) for k in ("stat_energy_from", "stat_energy_to", "stat_rate")}
+        out |= set((s.get("power_config") or {}).values())
+    return out - {None}
+
+
+def _sources(coordinator, ids: dict[str, str], used: set[str]) -> list[dict]:
+    """Our sources, leaving out the statistics the user's own sources already use."""
     t = coordinator.tariff
     zones = t["zones"] if t.get("mode") == "schedule" else [DYNAMIC_ZONE]
     out = []
     for sn in coordinator.inverters:
-        e = lambda key: ids.get(f"{sn}_{key}")  # noqa: E731
-        for i, z in enumerate(zones):
+        def e(key: str, sn=sn) -> str | None:
+            eid = ids.get(f"{sn}_{key}")
+            return None if eid in used else eid
+        first = True
+        for z in zones:
             src = {"type": "grid", "name": f"{MARK} grid · {z['name']}", "stat_energy_from": e(f"tariff_import_{z['id']}"),
                    "stat_energy_to": None, "stat_cost": None, "entity_energy_price": None, "number_energy_price": z.get("price"),
                    "stat_compensation": None, "entity_energy_price_export": None, "number_energy_price_export": None,
                    "cost_adjustment_day": 0.0}
             if t.get("mode") == "entity":
                 src["entity_energy_price"] = ids.get(f"{coordinator.config_entry.entry_id}_tariff_price")
-            if i == 0:  # export and live grid power belong to one connection
+            if not src["stat_energy_from"]:
+                continue
+            if first:  # export and live grid power belong to one connection
+                first = False
                 if e("tariff_meter_grid_export"):
                     src.update(stat_energy_to=e("tariff_meter_grid_export"), number_energy_price_export=float(t.get("export_price") or 0))
                 if e("acTtlInpower"):
                     src["power_config"] = {"stat_rate": e("acTtlInpower")}  # + = buying
-            if src["stat_energy_from"]:
-                out.append(src)
+            out.append(src)
         if e("tariff_meter_solar"):
             out.append({"type": "solar", "name": f"{MARK} solar", "stat_energy_from": e("tariff_meter_solar"),
                         "config_entry_solar_forecast": None, **({"stat_rate": e("pvTotalPower")} if e("pvTotalPower") else {})})
@@ -107,18 +122,18 @@ async def sync_energy(hass, coordinator, create: bool) -> str:
     status = "managed" if len(kept) < len(sources) else "own" if sources else "empty"
     if status == "own" or (status == "empty" and not create):
         return status
-    used = {s.get(k) for s in kept for k in ("stat_energy_from", "stat_energy_to")} - {None}
-    ours = [s for s in _sources(coordinator, ids) if s.get("stat_energy_from") not in used]  # the user's own come first
+    ours = _sources(coordinator, ids, _used(kept))  # the user's own come first
     try:
         validated = ENERGY_SOURCE_SCHEMA(kept + ours)
     except Exception as err:  # noqa: BLE001 - never leave the dashboard half-written
         _LOGGER.warning("Felicity: Energy dashboard not updated: %s", err)
         return status
-    await manager.async_update({"energy_sources": validated})
-    own = [list(_key(s)) for s in ours]
-    if entry.options.get(OWN) != own:
-        hass.config_entries.async_update_entry(entry, options={**entry.options, OWN: own})
-    _LOGGER.info("Felicity: Energy dashboard %s", "set up" if status == "empty" else "updated")
+    if validated != sources:
+        await manager.async_update({"energy_sources": validated})
+        _LOGGER.info("Felicity: Energy dashboard %s", "set up" if status == "empty" else "updated")
+    options = {**entry.options, OWN: [list(_key(s)) for s in ours], "energy_setup_done": True}
+    if options != entry.options:  # one update: each one runs the options listener (and this sync) again
+        hass.config_entries.async_update_entry(entry, options=options)
     return "managed"
 
 
@@ -127,9 +142,6 @@ async def after_tariff_saved(hass, coordinator) -> None:
     entry = coordinator.config_entry
     done = bool(entry.options.get("energy_setup_done"))
     try:
-        status = await sync_energy(hass, coordinator, create=not done)
+        await sync_energy(hass, coordinator, create=not done)
     except Exception as err:  # noqa: BLE001 - the tariff itself is saved either way
         _LOGGER.warning("Felicity: Energy dashboard sync failed: %s", err)
-        return
-    if status == "managed" and not done:
-        hass.config_entries.async_update_entry(entry, options={**entry.options, "energy_setup_done": True})
