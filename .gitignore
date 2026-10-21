@@ -5,3 +5,6 @@ secrets.yaml
 # Felicity Open API documentation and its fetch tool: kept locally, not published
 docs/api/
 tools/
+
+# local notes for Claude Code
+/CLAUDE.md
