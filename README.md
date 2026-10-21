@@ -136,7 +136,8 @@ Every setting the inverter reports, grouped like the Felicity app. Change a valu
 
 ## Installation
 
-1. Copy `custom_components/felicity` into your Home Assistant `config/custom_components/` folder.
+1. Install it through [HACS](https://hacs.xyz): search for **Felicity Inverter Integration Cloud** and download it (or [open it in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=zegioni&repository=felicity-ha&category=integration) directly).
+   Without HACS: copy `custom_components/felicity` (or the contents of `felicity.zip` from the [latest release](https://github.com/zegioni/felicity-ha/releases/latest)) into your Home Assistant `config/custom_components/felicity/` folder.
 2. Restart Home Assistant.
 3. **Settings → Devices & services → Add integration → Felicity Inverter Integration Cloud.**
 4. Read and accept the risk notice (the integration can change inverter settings), then sign in with your Felicity account (the one you use in the Felicity app). The account needs Open API access; ask Felicity support if sign-in is refused.
