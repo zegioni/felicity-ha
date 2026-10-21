@@ -296,8 +296,6 @@ class TariffView(_View):
             entry = coordinator.config_entry
             if body.get("energy") == "setup":  # the card's button, offered while the Energy dashboard is empty
                 status = await sync_energy(self.hass, coordinator, create=True)
-                if status == "managed":
-                    self.hass.config_entries.async_update_entry(entry, options={**entry.options, "energy_setup_done": True})
                 return {"ok": True, "energy": status}
             try:
                 tariff = validate_tariff(body.get("tariff"))
