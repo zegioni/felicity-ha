@@ -145,7 +145,7 @@ The **Solar** panel appears in the sidebar, and the cards appear in the dashboar
 
 ## Set-up
 
-- **Tariff:** open **Solar → Tariff**, pick a template or set your zones, and press **Save**. The first save also sets up the Energy dashboard, if it is empty. You can also use **Configure → Electricity tariff** on the integration.
+- **Tariff:** open **Solar → Tariff**, pick a template or set your zones, and press **Save**. The first save also sets up the Energy dashboard, if it is empty; later saves keep only the sources the integration wrote in step with the tariff, and sources you set up yourself (also on its zone sensors) are never changed. You can also use **Configure → Electricity tariff** on the integration.
 - **Battery reserve:** empty means the inverter's own *Low Batt* level (IVAM) or off-grid discharge depth (IVGM).
 - **Matter plugs:** see [Matter plugs (Apple Home)](#matter-plugs-apple-home) below.
 - **Power outage schedule (DTEK):** see [Power outage schedule](#power-outage-schedule-dtek-ukraine) below.

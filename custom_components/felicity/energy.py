@@ -3,9 +3,10 @@
 """Home Assistant Energy dashboard set up from the tariff: one grid connection per tariff zone with its price,
 export, solar, battery with SOC, and live power flows.
 
-The sources this integration writes are named "Felicity …". They are created when a tariff is first saved (only if
-the dashboard is empty) and rewritten on every later save; sources of other accounts and anything the user set up
-by hand are never touched."""
+The sources this integration writes are named "Felicity …" and remembered in the entry's options (OWN: their type and
+energy statistic) when written. They are created when a tariff is first saved (only if the dashboard is empty) and
+rewritten on later saves; only the remembered ones are ever replaced, so sources the user set up by hand (also on
+the sensors this integration makes for the dashboard) and other accounts' sources are never touched."""
 from __future__ import annotations
 
 import logging
@@ -17,29 +18,32 @@ from .tariff import DYNAMIC_ZONE
 
 _LOGGER = logging.getLogger(__name__)
 MARK = "Felicity"
-STATS = ("stat_energy_from", "stat_energy_to")
+OWN = "energy_sources"  # entry option: [[type, energy statistic], ...] of the sources this entry wrote
 
 
-def _entities(hass, entry_id: str) -> tuple[dict[str, str], set[str], set[str]]:
-    """(unique_id -> entity_id of this entry, entity ids of the sensors made for the Energy dashboard (zone imports,
-    meters) of this entry, entity ids of other Felicity accounts)."""
-    mine, made, others = {}, set(), set()
+def _entities(hass, entry_id: str) -> tuple[dict[str, str], set[str]]:
+    """(unique_id -> entity_id of this entry, entity ids of the sensors it makes for the Energy dashboard)."""
+    mine, made = {}, set()
     for e in er.async_get(hass).entities.values():
-        if e.platform != DOMAIN:
-            continue
-        if e.config_entry_id != entry_id:
-            others.add(e.entity_id)
-            continue
-        mine[e.unique_id] = e.entity_id
-        if "_tariff_import_" in e.unique_id or "_tariff_meter_" in e.unique_id:
-            made.add(e.entity_id)
-    return mine, made, others
+        if e.platform == DOMAIN and e.config_entry_id == entry_id:
+            mine[e.unique_id] = e.entity_id
+            if "_tariff_import_" in e.unique_id or "_tariff_meter_" in e.unique_id:
+                made.add(e.entity_id)
+    return mine, made
 
 
-def _is_ours(src: dict, made: set[str], others: set[str]) -> bool:
-    """Named "Felicity …" (or renamed but still on the sensors made for it), and not another account's."""
-    stats = {src.get(k) for k in STATS}
-    return (str(src.get("name", "")).startswith(MARK) or bool(stats & made)) and not stats & others
+def _key(src: dict) -> tuple:
+    return src.get("type"), src.get("stat_energy_from")
+
+
+def _written(entry, sources: list[dict], made: set[str]) -> set[tuple]:
+    """The sources this entry wrote. Set-ups from before OWN was kept: the ones it named "Felicity …" on a sensor it
+    made for the dashboard (Home Assistant's Energy settings do not name sources), taken over once."""
+    if OWN in entry.options:
+        return {tuple(k) for k in entry.options[OWN]}
+    if not entry.options.get("energy_setup_done"):
+        return set()
+    return {_key(s) for s in sources if str(s.get("name", "")).startswith(MARK) and s.get("stat_energy_from") in made}
 
 
 def _sources(coordinator, ids: dict[str, str]) -> list[dict]:
@@ -85,8 +89,9 @@ async def _prefs(hass):
 async def energy_status(hass, coordinator) -> str:
     """'managed' (has our sources), 'empty', or 'own' (set up by hand: left alone)."""
     _, sources = await _prefs(hass)
-    _, made, others = _entities(hass, coordinator.config_entry.entry_id)
-    if any(_is_ours(s, made, others) for s in sources):
+    _, made = _entities(hass, coordinator.config_entry.entry_id)
+    written = _written(coordinator.config_entry, sources, made)
+    if any(_key(s) in written for s in sources):
         return "managed"
     return "own" if sources else "empty"
 
@@ -95,17 +100,24 @@ async def sync_energy(hass, coordinator, create: bool) -> str:
     """Rewrite our sources (when there are some, or the dashboard is empty and create is set); returns the status."""
     from homeassistant.components.energy.data import ENERGY_SOURCE_SCHEMA
     manager, sources = await _prefs(hass)
-    ids, made, others = _entities(hass, coordinator.config_entry.entry_id)
-    kept = [s for s in sources if not _is_ours(s, made, others)]
+    entry = coordinator.config_entry
+    ids, made = _entities(hass, entry.entry_id)
+    written = _written(entry, sources, made)
+    kept = [s for s in sources if _key(s) not in written]
     status = "managed" if len(kept) < len(sources) else "own" if sources else "empty"
     if status == "own" or (status == "empty" and not create):
         return status
+    used = {s.get(k) for s in kept for k in ("stat_energy_from", "stat_energy_to")} - {None}
+    ours = [s for s in _sources(coordinator, ids) if s.get("stat_energy_from") not in used]  # the user's own come first
     try:
-        validated = ENERGY_SOURCE_SCHEMA(kept + _sources(coordinator, ids))
+        validated = ENERGY_SOURCE_SCHEMA(kept + ours)
     except Exception as err:  # noqa: BLE001 - never leave the dashboard half-written
         _LOGGER.warning("Felicity: Energy dashboard not updated: %s", err)
         return status
     await manager.async_update({"energy_sources": validated})
+    own = [list(_key(s)) for s in ours]
+    if entry.options.get(OWN) != own:
+        hass.config_entries.async_update_entry(entry, options={**entry.options, OWN: own})
     _LOGGER.info("Felicity: Energy dashboard %s", "set up" if status == "empty" else "updated")
     return "managed"
 
