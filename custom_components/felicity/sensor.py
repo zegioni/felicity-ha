@@ -98,9 +98,8 @@ SENSORS = (
     _s("live", "devTempMax", "Inverter temperature", T, C),
     _s("live", "devTempMin", "Inverter min temperature", T, C),
     _s("live", "tempMax", "Battery temperature", T, C),
-    # documented as the battery pack's minimum, but on IVAM it reads above tempMax (35–45 °C vs ~30 °C):
-    # a second sensor inside the inverter, named neutrally
-    _s("live", "tempMin", "Internal temperature", T, C),
+    # documented as the battery pack's minimum, but on IVAM it is the "Envi. Temp" of the Felicity app
+    _s("live", "tempMin", "Ambient temperature", T, C),
     _s("live", "workMode", "Work mode", sc=None),
     _s("live", "ebatCharTotal", "Battery charged total", E, KWH, TI),
     _s("live", "ebatDischarTotal", "Battery discharged total", E, KWH, TI),
@@ -112,8 +111,10 @@ SENSORS = (
 )
 
 # keys whose meaning is only known for one model family: "tempMin" is the battery minimum in the API documentation,
-# but on IVAM it is the "Internal temperature" above
+# but on IVAM it is the "Ambient temperature" above
 MODEL_ONLY = {"tempMin": "IVAM"}
+# names that differ by model family: on IVAM "tempMax" is the "Heat Sink Temp" of the Felicity app, not the battery
+MODEL_NAMES = {"tempMax": ("IVAM", "Heat sink temperature")}
 
 # Battery pack (device list entry with bp*Version instead of masterVersion).
 BATTERY_SENSORS = (
@@ -143,7 +144,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     def reported(v: dict, d: FelicitySensorDescription) -> bool:
         # only what the device actually reports (an empty record, e.g. offline at start-up, creates everything)
         rec = v.get(d.source) or {}
-        if d.key in MODEL_ONLY and not str(v["device"].get("deviceModel") or "").upper().startswith(MODEL_ONLY[d.key]):
+        if (d.key in MODEL_ONLY and not _is_battery(v["device"])
+                and not str(v["device"].get("deviceModel") or "").upper().startswith(MODEL_ONLY[d.key])):
             return False
         return not rec or rec.get(d.key) not in (None, "")
     entities: list[SensorEntity] = [FelicitySensor(coordinator, sn, d) for sn, v in coordinator.data.items()
@@ -168,6 +170,9 @@ class FelicitySensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
         self._attr_unique_id = f"{sn}_{description.key}"
         self._attr_extra_state_attributes = {"sn": sn, "field": f"{description.source}.{description.key}"}
         dev = coordinator.data[sn]["device"]
+        model, name = MODEL_NAMES.get(description.key, (None, None))
+        if model and not _is_battery(dev) and str(dev.get("deviceModel") or "").upper().startswith(model):
+            self._attr_name = name
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, sn)}, manufacturer="Felicity Solar",
                                             model=dev.get("deviceModel") or dev.get("deviceType"),
                                             name=f"Felicity {'battery' if _is_battery(dev) else 'inverter'} {sn[-4:]}",
