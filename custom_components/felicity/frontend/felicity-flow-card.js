@@ -443,6 +443,12 @@ class FelicityFlowCard extends HTMLElement {
     this._set = settings[UI.sn] || {};
     const v = {};
     for (const [k, f] of Object.entries(FIELDS)) v[k] = this._idx[f] ? this._num(this._idx[f]) : null;
+    // the battery packs of this inverter's plant report the real battery temperature (on IVAM the inverter's
+    // own tempMax is its heat sink); the hottest pack, else the inverter's value as before
+    const plant = Object.values(this._idx).map((st) => st.attributes.plant).find(Boolean);
+    const packTemps = plant ? Object.entries(idx).filter(([sn, f]) => !inv.has(sn) && f["live.tempMax"]
+      && f["live.tempMax"].attributes.plant === plant).map(([, f]) => this._num(f["live.tempMax"])).filter((t) => t !== null) : [];
+    if (packTemps.length) v.battery_temp = Math.max(...packTemps);
     this._v = v;
     let setStamp = "";
     for (const st of Object.values(this._set)) setStamp += st.last_updated;

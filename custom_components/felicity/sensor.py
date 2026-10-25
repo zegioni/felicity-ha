@@ -168,8 +168,10 @@ class FelicitySensor(CoordinatorEntity[FelicityCoordinator], SensorEntity):
         self.entity_description = description
         self._sn = sn
         self._attr_unique_id = f"{sn}_{description.key}"
-        self._attr_extra_state_attributes = {"sn": sn, "field": f"{description.source}.{description.key}"}
         dev = coordinator.data[sn]["device"]
+        # plant: the card pairs an inverter with the battery packs of the same plant
+        self._attr_extra_state_attributes = {"sn": sn, "field": f"{description.source}.{description.key}",
+                                             "plant": dev.get("plantId")}
         model, name = MODEL_NAMES.get(description.key, (None, None))
         if model and not _is_battery(dev) and str(dev.get("deviceModel") or "").upper().startswith(model):
             self._attr_name = name
