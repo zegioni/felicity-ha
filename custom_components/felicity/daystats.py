@@ -17,6 +17,7 @@ from .tariff import DYNAMIC_ZONE, Pricer
 GAP = timedelta(minutes=10)      # power integration does not bridge longer gaps in history
 RUNTIME_WINDOW = timedelta(hours=24)
 RESET = 1.0                      # a day counter falling by more than this (kWh) has restarted
+STUCK = 0.5                      # a grid counter below this share of the power integral has stopped counting
 CHARGE_LOSS = 1.25               # at most this much grid energy is paid per kWh charged (the inverter's losses)
 
 
@@ -60,13 +61,26 @@ def _intervals(rows: list[dict]):
         prev = r["_local"]
 
 
+def grid_power_kwh(rows: list[dict]) -> float:
+    return sum(max(num(r, "acTtlInpower"), 0) * h for r, h, _ in _intervals(rows))
+
+
+def grid_counter(rows: list[dict]) -> bool:
+    """Whether the day's grid-import counter can be trusted. Some nights the inverter's counter stays at 0 for hours
+    while the grid charges the battery (2026-11-03: 2.8 kWh counted, 18.5 kWh by power); then power is used."""
+    if not has(rows, "eGridInToday"):
+        return False
+    power = grid_power_kwh(rows)
+    return power <= 1.0 or sum(counter_steps(rows, "eGridInToday")) >= power * STUCK
+
+
 def power_scale(rows: list[dict]) -> float:
     """The day's grid-import counter divided by its power integral. The inverter's power readings run a few % high
     against its own counter, so home and battery energy are scaled by this: with no battery and no solar, the home's
-    use then equals what was bought. 1 without a counter."""
-    if not has(rows, "eGridInToday"):
+    use then equals what was bought. 1 without a counter that can be trusted."""
+    if not grid_counter(rows):
         return 1.0
-    power = sum(max(num(r, "acTtlInpower"), 0) * h for r, h, _ in _intervals(rows))
+    power = grid_power_kwh(rows)
     return sum(counter_steps(rows, "eGridInToday")) / power if power > 0.1 else 1.0
 
 
@@ -84,9 +98,10 @@ def day_totals(rows: list[dict]) -> dict:
         t["battery_discharge"] += max(-bat, 0) * h * scale
         t["home"] += max(num(r, "acTotalOutActPower"), 0) * h * scale
         t["home_meter"] += max(num(r, "meterPower"), 0) * h * scale
-    for key, counter in (("grid_import", "eGridInToday"), ("solar", "ePvToday")):
-        if has(rows, counter):
-            t[key] = sum(counter_steps(rows, counter))
+    if grid_counter(rows):
+        t["grid_import"] = sum(counter_steps(rows, "eGridInToday"))
+    if has(rows, "ePvToday"):
+        t["solar"] = sum(counter_steps(rows, "ePvToday"))
     return {k: round(v, 3) for k, v in t.items()}
 
 
@@ -118,7 +133,7 @@ def zone_split(rows: list[dict], pricer: Pricer, zones: list[dict], export_price
 
     for z in zones or [DYNAMIC_ZONE]:
         entry(z)
-    steps = counter_steps(rows, "eGridInToday") if has(rows, "eGridInToday") else None
+    steps = counter_steps(rows, "eGridInToday") if grid_counter(rows) else None
     # home and battery energy scaled to the grid counter (see power_scale); the counter, in 0.1 kWh steps, is too
     # coarse to tell which minute's import went where, so the battery's share uses the scaled power
     scale = power_scale(rows)
