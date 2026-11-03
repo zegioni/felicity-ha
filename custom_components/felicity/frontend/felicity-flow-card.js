@@ -91,6 +91,8 @@ const ICON = {
 const ACTIVE_W = 5;         // below this a power counts as idle
 const BATTERY_IDLE_W = 20;  // the battery reports a few watts of noise
 const MIN_KWH = 0.05;       // smaller daily figures are not worth a line
+const AC_MIN_V = 100;       // a grid input / backup output below this is down
+const DC_MIN_V = 10;        // a PV string / battery below this is not there
 const COLOR = { sun: "#ffc93c", grid: "#5aa9ff", home: "#ff7eb6", port: "#ff9f43", charge: "#3ddc84", use: "#c08bff" };
 // columns of /api/felicity/history rows (["t", *SERIES] in views.py)
 const COL = { t: 0, pv: 1, pv1: 2, pv2: 3, grid: 4, bat: 5, home: 6, soc: 7, pv1v: 8, pv2v: 9, gridv: 10 };
@@ -104,6 +106,7 @@ const FIELDS = {
   pv3_power: "live.pv3Power", pv3_volt: "live.pv3Volt", pv3_curr: "live.pv3InCurr",
   pv4_power: "live.pv4Power", pv4_volt: "live.pv4Volt", pv4_curr: "live.pv4InCurr",
   battery2_power: "live.emsPower2", battery2_soc: "live.emsSoc2",  // T-REX: a second battery
+  grid_volt: "live.acRInVolt", load_volt: "live.acROutVolt",
   pv_today: "energy.generateEnergy", load_today: "energy.offGridEnergy", grid_import_today: "energy.gridInput",
   grid_export_today: "energy.feedOutput", battery_charge_today: "energy.batCharEnergy", battery_discharge_today: "energy.batDisEnergy",
 };
@@ -190,7 +193,8 @@ const STYLES = `<style>
   .invnode{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;background:#1d2533;box-shadow:0 0 0 2px #ffffff30;display:grid;place-items:center;color:#cfd8e6;z-index:1}
   .node{position:absolute;z-index:1;width:34%;text-align:center}
   .node.sun{left:0;top:0}.node.grid{right:0;top:0}.node.bat{left:0;bottom:0}.node.home{right:0;bottom:0}.node.port{left:33%;bottom:0}
-  .ic{width:46px;height:46px;border-radius:15px;display:grid;place-items:center;margin:0 auto 4px;box-shadow:inset 0 0 0 1px currentColor}
+  .ic{position:relative;width:46px;height:46px;border-radius:15px;display:grid;place-items:center;margin:0 auto 4px;box-shadow:inset 0 0 0 1px currentColor}
+  .ic .x{position:absolute;right:-5px;bottom:-5px;width:18px;height:18px;border-radius:50%;background:#ff5d5d;color:#fff;display:grid;place-items:center;box-shadow:0 0 0 2px #141922}
   .ic svg{display:block}.spin{animation:spin 12s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
   .val{font-size:22px;font-weight:700;letter-spacing:-.3px;font-variant-numeric:tabular-nums}
   .lbl{font-size:12px;opacity:.7;line-height:1.3}.lbl span{opacity:.85;font-weight:600}
@@ -685,9 +689,15 @@ class FelicityFlowCard extends HTMLElement {
     const portPw = (isSmart ? v.smart_power : v.gen_power) ?? 0;
     // flow lines from each node to the inverter; dir +1 = toward the inverter
     const flow = (id, active, dir, col) => `<path data-from="${id}" class="line"/><path data-from="${id}" class="flow ${!active ? "idle" : dir > 0 ? "in" : "out"}" style="stroke:${col}"/>`;
+    // a red cross on the icon when that side is not there (no grid, no panels, no battery, output off)
+    const below = (x, min) => x !== null && x < min;
+    const pvV = ["pv1", "pv2", "pv3", "pv4"].map((k) => v[k + "_volt"]).filter((x) => x !== null);
+    const off = { sun: pvV.length > 0 && Math.max(...pvV) < DC_MIN_V, grid: below(v.grid_volt, AC_MIN_V),
+      bat: below(v.battery_voltage, DC_MIN_V), home: below(v.load_volt, AC_MIN_V) };
+    const cross = `<i class="x"><svg viewBox="0 0 10 10" width="8" height="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 2l6 6M8 2 2 8"/></svg></i>`;
     const node = (cls, icon, label, value, sub, col, extra = "") => `
       <div class="node ${cls}">
-        <div class="ic" style="background:linear-gradient(${col}26,${col}26),#18202d;color:${col}">${icon}</div>
+        <div class="ic" style="background:linear-gradient(${col}26,${col}26),#18202d;color:${col}">${icon}${off[cls] ? cross : ""}</div>
         <div class="val">${value}</div>
         <div class="lbl">${label}<br><span>${sub}</span></div>${extra}
       </div>`;
@@ -731,7 +741,7 @@ class FelicityFlowCard extends HTMLElement {
           <div class="invnode">${ICON.inverter()}</div>
           ${node("sun", ICON.sun(pv > ACTIVE_W), "Solar", FMT(pv), pv > ACTIVE_W ? "producing now" : "not producing", COLOR.sun,
             (pvChips ? `<div class="chips">${pvChips}</div>` : "") + today([["Today", KWH(E.pv)]]))}
-          ${node("grid", ICON.grid(), "Grid", FMT(grid), grid > ACTIVE_W ? "buying from grid" : grid < -ACTIVE_W ? "selling to grid" : "not used now", COLOR.grid,
+          ${node("grid", ICON.grid(), "Grid", FMT(grid), grid > ACTIVE_W ? "buying from grid" : grid < -ACTIVE_W ? "selling to grid" : off.grid ? "no grid" : "not used now", COLOR.grid,
             phases + pricePill + today([["Bought today", KWH(E.buy)], day && ["Cost today", MONEY(day.grid_cost, cur)],
               E.sell > MIN_KWH && ["Sold today", KWH(E.sell)]]))}
           ${node("bat", ICON.battery(soc, charging), "Battery", FMT(bat), charging ? "charging" : discharging ? "powering the home" : "resting", socCol,
