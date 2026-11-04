@@ -659,7 +659,7 @@ class FelicityCoordinator(DataUpdateCoordinator[dict]):
         return {"soc": soc, "steps": steps, "prices": prices, "day_prices": day_prices, "current": current,
                 "system": system, "reserve": self.reserve(sn)[0], "power_max": power_max, "now": now,
                 "charge_w": next((r.power for r in current if r.grid_charge and r.power), 2000.0),
-                "max_rules": sum(1 for k in values if k.startswith("ecoRule") and k[7:].isdigit()) or len(current),
+                "max_rules": prof.segment_count(values) or len(current),
                 "outages": [tuple(o) for o in outages]}
 
     async def plan_now(self, sn: str) -> dict:
